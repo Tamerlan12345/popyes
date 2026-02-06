@@ -235,3 +235,106 @@ section#map {
       bottom: 100px;
   }
 }
+
+/* ---- New Smart Location Styles ---- */
+
+/* Tabs */
+.panel-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 1rem;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 0.75rem;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--text-color);
+  border-bottom: 2px solid transparent;
+}
+
+.tab-btn.active {
+  color: var(--primary-color);
+  border-bottom-color: var(--primary-color);
+}
+
+.tab-btn:hover {
+  background-color: rgba(0,0,0,0.02);
+}
+
+/* Primary Button */
+.primary-btn {
+    width: 100%;
+    padding: 0.75rem;
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: 0.5rem;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.primary-btn:hover {
+    background-color: var(--primary-hover);
+}
+
+.primary-btn.active {
+    background-color: #dc3545; /* Red to stop/cancel */
+}
+
+/* Spinner */
+.spinner {
+  border: 4px solid rgba(0, 0, 0, 0.1);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border-left-color: var(--primary-color);
+  animation: spin 1s ease infinite;
+  margin: 0 auto 10px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Audit Results */
+.audit-score-card {
+    padding: 1rem;
+    border-radius: 0.5rem;
+    color: white;
+    text-align: center;
+    margin-bottom: 1rem;
+}
+.score-green { background-color: #22c55e; }
+.score-yellow { background-color: #eab308; color: #212529; }
+.score-red { background-color: #ef4444; }
+
+.audit-section-title {
+    font-weight: 600;
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.95rem;
+}
+
+.stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    background: #f8f9fa;
+    padding: 0.5rem;
+    border-radius: 0.5rem;
+}
+.stat-item {
+    text-align: center;
+}
+.stat-val { font-weight: bold; font-size: 1.1rem; }
+.stat-label { font-size: 0.75rem; color: #666; }
+
+.map-cursor-audit {
+    cursor: crosshair !important;
+}
