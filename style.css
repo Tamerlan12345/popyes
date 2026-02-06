@@ -1,0 +1,237 @@
+:root {
+  --bg-color: #f8f9fa;
+  --panel-bg: #ffffff;
+  --text-color: #212529;
+  --primary-color: #007bff;
+  --primary-hover: #0056b3;
+  --border-color: #dee2e6;
+  --shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+  --font-family: 'Inter', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-family);
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+header {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  background-color: var(--panel-bg);
+  border-bottom: 1px solid var(--border-color);
+  box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+  z-index: 1001;
+  height: 73px;
+}
+
+.title {
+  font-weight: 600;
+  font-size: 1.5rem;
+  display: flex;
+  align-items: center;
+}
+
+.header-logo {
+  height: 30px;
+  margin-right: 10px;
+  vertical-align: middle;
+}
+
+/* Main Layout */
+#mainContent {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+main {
+  display: flex;
+  flex-grow: 1;
+  /* Subtract header height */
+  height: calc(100vh - 73px);
+}
+
+aside#panel {
+  width: 350px;
+  flex-shrink: 0;
+  padding: 1.5rem;
+  overflow-y: auto;
+  background-color: var(--panel-bg);
+  border-right: 1px solid var(--border-color);
+  z-index: 1000;
+  position: relative;
+  /* Adjust for footer */
+  padding-bottom: 4rem;
+}
+
+section#map {
+  flex-grow: 1;
+  height: 100%;
+}
+
+.section {
+  background-color: var(--panel-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 0.125rem 0.25rem rgba(0,0,0,0.075);
+}
+
+.section h3 {
+  margin-top: 0;
+  margin-bottom: 1.25rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 0.75rem;
+}
+
+/* Lists and Cards */
+.scroll {
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
+  padding-right: 0.75rem;
+}
+
+.contract-card {
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  background: #fff;
+  font-size: 1rem;
+  transition: box-shadow 0.2s;
+  cursor: pointer;
+}
+.contract-card:hover {
+    box-shadow: 0 0.25rem 0.5rem rgba(0,0,0,0.1);
+}
+
+.contract-card .meta {
+  font-size: 0.875rem;
+  color: #6c757d;
+  margin-top: 0.5rem;
+}
+
+/* Collapsible Headers */
+.collapsible-header {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.collapsible-header h3 {
+  margin: 0;
+  border: none;
+  padding: 0;
+}
+
+#earthquakeToggleIcon {
+  display: inline-block;
+  transition: transform 0.2s ease-in-out;
+}
+
+#earthquakeToggleIcon.rotated {
+  transform: rotate(90deg);
+}
+
+#earthquakeList.collapsed {
+  display: none;
+}
+
+/* Legend */
+.legend {
+  position: absolute;
+  bottom: 80px; /* Shifted up for footer */
+  right: 1.5rem;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  box-shadow: var(--shadow);
+  z-index: 999;
+  backdrop-filter: blur(5px);
+}
+.legend.hidden { display: none; }
+.legend .row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
+.legend i { width: 1.5rem; height: 1rem; border: 1px solid #ccc; border-radius: 0.25rem; }
+
+/* Disclaimer Footer */
+.disclaimer-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  background-color: rgba(33, 37, 41, 0.9);
+  color: #f8f9fa;
+  padding: 10px 20px;
+  font-size: 0.8rem;
+  z-index: 3000;
+  border-top: 1px solid #495057;
+  text-align: center;
+}
+
+.disclaimer-content p {
+    margin: 0.2rem 0;
+}
+
+.disclaimer-content a {
+  color: #6ea8fe;
+  text-decoration: none;
+}
+
+.disclaimer-content a:hover {
+  text-decoration: underline;
+}
+
+/* Leaflet Adjustments */
+.leaflet-bottom {
+  bottom: 80px !important;
+}
+
+/* Utility */
+.hidden { display: none !important; }
+
+/* Responsive */
+@media (max-width: 768px) {
+  header {
+    height: auto;
+    padding: 0.75rem;
+  }
+
+  main {
+    flex-direction: column;
+    height: auto;
+  }
+
+  aside#panel {
+    width: 100%;
+    height: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+    padding: 1rem;
+    padding-bottom: 1rem;
+  }
+
+  section#map {
+    height: 60vh;
+  }
+
+  .legend {
+      bottom: 100px;
+  }
+}

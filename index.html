@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Centras-Maps</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Turf.js (Lazy Loaded or explicitly included if needed) -->
+  <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+
+  <!-- Leaflet.pattern -->
+  <script src="leaflet.pattern.js"></script>
+
+  <!-- Leaflet.markercluster -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
+  <script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
+
+  <!-- Leaflet Heat -->
+  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+
+  <link rel="stylesheet" href="./style.css" />
+  <link rel="icon" type="image/png" href="./logo.png">
+</head>
+<body>
+
+  <div id="mainContent">
+    <header>
+      <div class="title"><img src="./logo.png" alt="Logo" class="header-logo"> Centras-Maps</div>
+    </header>
+
+    <main>
+      <aside id="panel">
+        <section class="section list">
+            <div id="toggleEarthquakesList" class="collapsible-header">
+                <h3>Землетрясения</h3>
+                <span id="earthquakeToggleIcon" class="toggle-icon">▶</span>
+            </div>
+            <div id="earthquakeList" class="scroll collapsed"></div>
+        </section>
+      </aside>
+
+      <section id="map"></section>
+    </main>
+
+    <div id="legendSeismic" class="legend hidden"></div>
+  </div>
+
+  <div id="disclaimer-footer" class="disclaimer-bar">
+    <div class="disclaimer-content">
+      <p>
+        <strong>Внимание:</strong> Данный сервис носит исключительно информационно-ознакомительный характер.
+        Данные о землетрясениях предоставлены <a href="https://earthquake.usgs.gov/" target="_blank">USGS API</a>,
+        метеорологические данные — <a href="https://open-meteo.com/" target="_blank">Open-Meteo API</a>.
+      </p>
+      <p>
+        Сервис использует общедоступные бесплатные источники данных, которые могут содержать погрешности или задержки.
+        Компания не несет ответственности за принятые решения, основанные на данной информации.
+        Сервис не является официальным источником оповещения о ЧС.
+      </p>
+    </div>
+  </div>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>
