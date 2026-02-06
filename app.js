@@ -567,7 +567,7 @@ function parseOverpassData(data) {
     return summary;
 }
 
-async function askGemini(summaryData, lat, lon) {
+async function askGemini(summaryData, lat, lon, address) { // <--- Добавили address
     const apiKey = window.GEMINI_API_KEY;
 
     if (!apiKey || apiKey.includes("Env.GEMINI_API_KEY") || apiKey.trim() === "") {
@@ -576,29 +576,32 @@ async function askGemini(summaryData, lat, lon) {
         throw new Error("API Key required");
     }
 
-    // Если данные с карты не пришли (null), пишем об этом ИИ
     const mapDataText = summaryData 
         ? JSON.stringify(summaryData) 
-        : "НЕТ ДАННЫХ С КАРТЫ (OSM недоступен). Ориентируйся ТОЛЬКО на Google Search.";
+        : "НЕТ ДАННЫХ С КАРТЫ (OSM недоступен).";
 
-    const systemPrompt = `Ты — Стратегический консультант по локациям.`;
+    const systemPrompt = `Ты — Стратегический консультант по локациям и являешься менеджером по разивтию сети быстрого питания.`;
 
+    // --- ОБНОВЛЕННЫЙ ПРОМПТ ---
     const userPrompt = `
-    АУДИТ ЛОКАЦИИ: ${lat}, ${lon}.
+    АУДИТ ЛОКАЦИИ.
+    ТОЧНЫЙ АДРЕС: ${address}
+    КООРДИНАТЫ: ${lat}, ${lon}
 
-    ДАННЫЕ OSM: ${mapDataText}
+    ДАННЫЕ OSM ВОКРУГ: ${mapDataText}
 
     ЗАДАЧА:
-    1. Используй Google Search для анализа района (названия ЖК, ВУЗов, трафик, новости).
-    2. Составь портрет клиента и оцени конкуренцию.
+    1. Анализируй ИМЕННО ЭТОТ АДРЕС (${address}). Не путай с другими районами.
+    2. Используй Google Search, чтобы проверить, что находится в этом здании или рядом (магазины, офисы, ЖК).
+    3. Составь портрет клиента и оцени конкуренцию.
 
-    ВАЖНОЕ ТРЕБОВАНИЕ К ФОРМАТУ JSON:
-    - СТРОГО запрещено использовать двойные кавычки (") внутри значений строк. Используй одинарные (') или типографские (« »).
-    - Пример ОШИБКИ: "text": "Кафе "Сказка"" (ЭТО СЛОМАЕТ JSON)
-    - Пример ПРАВИЛЬНО: "text": "Кафе 'Сказка'" (ЭТО ПРАВИЛЬНО)
+    ВАЖНО:
+    - Не используй двойные кавычки (") внутри текста JSON.
+    - Если данных мало — пиши честно "Мало данных", не выдумывай несуществующие БЦ.
 
-    ВЕРНИ ТОЛЬКО JSON ОБЪЕКТ:
+    ВЕРНИ ТОЛЬКО JSON:
     {
+      "analyzed_address": "Напиши адрес, который ты анализируешь (для проверки)",
       "score": 0-100,
       "verdict": "Текст...",
       "location_vibe": "Текст...",
@@ -616,7 +619,7 @@ async function askGemini(summaryData, lat, lon) {
     }
     `;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
     const payload = {
         system_instruction: { parts: [{ text: systemPrompt }] },
@@ -651,7 +654,6 @@ async function askGemini(summaryData, lat, lon) {
 
         console.log("Raw AI Response:", textPart);
 
-        // --- ПАРСИНГ ---
         const firstBrace = textPart.indexOf('{');
         const lastBrace = textPart.lastIndexOf('}');
 
@@ -659,21 +661,17 @@ async function askGemini(summaryData, lat, lon) {
              throw new Error("JSON not found in response");
         }
 
-        // Попытка очистить JSON от частых ошибок (если ИИ все же накосячил)
         let jsonString = textPart.substring(firstBrace, lastBrace + 1);
         
         try {
             return JSON.parse(jsonString);
         } catch (e) {
-            console.warn("Первичный парсинг не удался, пробуем исправить кавычки...", e);
-            // Экстренная попытка исправить: заменяем \" на ' внутри строки (очень грубо, но может спасти)
-            // Но лучше просто попросить пользователя повторить, так как регулярками чистить JSON сложно.
-            throw new Error("Ошибка чтения JSON от ИИ. Попробуйте еще раз. (ИИ использовал некорректные символы)");
+            console.warn("JSON Parse Error. Raw:", jsonString);
+            throw new Error("Ошибка чтения ответа от ИИ. Попробуйте еще раз.");
         }
 
     } catch (e) {
         console.error("Analysis failed", e);
-        // Если совсем всё плохо, возвращаем заглушку, чтобы интерфейс не завис
         if (e.message.includes("Overpass")) {
              alert("Сервер карт не отвечает. Попробуйте позже.");
         } else {
@@ -782,6 +780,20 @@ map.on('popupopen', (e) => {
         };
     }
 });
+// --- Новая функция для получения адреса ---
+
+async function getAddress(lat, lon) {
+    try {
+        // Используем бесплатный геокодер OSM (Nominatim)
+        const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&accept-language=ru`);
+        if (!response.ok) throw new Error('Geocoding failed');
+        const data = await response.json();
+        return data.display_name || "Адрес не определен";
+    } catch (e) {
+        console.warn("Geocoding error:", e);
+        return "Адрес не определен (координаты: " + lat.toFixed(4) + ", " + lon.toFixed(4) + ")";
+    }
+}
 
 async function runAnalysis(latlng) {
     const { lat, lng } = latlng;
@@ -792,13 +804,16 @@ async function runAnalysis(latlng) {
     document.getElementById('auditLoading').classList.remove('hidden');
 
     try {
-        // 1. Get Data
-        const summary = await getSurroundingData(lat, lng);
+        // 1. Параллельно получаем данные карты и точный адрес
+        const [summary, address] = await Promise.all([
+            getSurroundingData(lat, lng),
+            getAddress(lat, lng)
+        ]);
 
-        // 2. Ask AI
-        const aiResult = await askGemini(summary, lat, lng);
+        // 2. Отправляем всё в ИИ (передаем address!)
+        const aiResult = await askGemini(summary, lat, lng, address);
 
-        // 3. Render Result
+        // 3. Рисуем результат
         renderAuditResult(aiResult);
 
     } catch (error) {
