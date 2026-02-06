@@ -1,0 +1,14 @@
+127.0.0.1 - - [06/Feb/2026 06:11:46] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [06/Feb/2026 06:11:47] "GET /style.css HTTP/1.1" 200 -
+127.0.0.1 - - [06/Feb/2026 06:11:47] "GET /leaflet.pattern.js HTTP/1.1" 200 -
+127.0.0.1 - - [06/Feb/2026 06:11:47] "GET /logo.png HTTP/1.1" 200 -
+127.0.0.1 - - [06/Feb/2026 06:11:47] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [06/Feb/2026 06:11:47] "GET /kaz_adm1_simplified.geojson HTTP/1.1" 200 -
+127.0.0.1 - - [06/Feb/2026 06:11:47] "GET /kz_risk_zones.geojson HTTP/1.1" 200 -
+127.0.0.1 - - [06/Feb/2026 06:12:09] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [06/Feb/2026 06:12:09] "GET /style.css HTTP/1.1" 200 -
+127.0.0.1 - - [06/Feb/2026 06:12:09] "GET /logo.png HTTP/1.1" 200 -
+127.0.0.1 - - [06/Feb/2026 06:12:09] "GET /leaflet.pattern.js HTTP/1.1" 200 -
+127.0.0.1 - - [06/Feb/2026 06:12:09] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [06/Feb/2026 06:12:09] "GET /kz_risk_zones.geojson HTTP/1.1" 200 -
+127.0.0.1 - - [06/Feb/2026 06:12:09] "GET /kaz_adm1_simplified.geojson HTTP/1.1" 200 -

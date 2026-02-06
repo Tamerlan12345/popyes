@@ -44,6 +44,10 @@ const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png
   attribution: '© OpenStreetMap contributors'
 });
 
+const esriLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+});
+
 // ---- Layers ----
 let regionsGeoJSON = null;
 let regionLayer = L.geoJSON(null, {
@@ -416,7 +420,8 @@ async function fetchAndDisplayShakeMap(gridUrl, eventTitle) {
 
 function setupLayerControl() {
     const baseLayers = {
-        "OpenStreetMap": osmLayer
+        "OpenStreetMap": osmLayer,
+        "Sputnik (Esri)": esriLayer
     };
 
     const overlayLayers = {
@@ -451,6 +456,362 @@ async function init() {
 
   // Auto-refresh earthquakes
   setInterval(loadEarthquakeData, 10 * 60 * 1000);
+}
+
+// ---- Smart Location Analysis ----
+
+async function getSurroundingData(lat, lon) {
+    const query = `
+      [out:json][timeout:25];
+      (
+        node(around:500, ${lat}, ${lon})["amenity"~"fast_food|cafe|school|university"];
+        way(around:500, ${lat}, ${lon})["amenity"~"fast_food|cafe|school|university"];
+        node(around:500, ${lat}, ${lon})["shop"="mall"];
+        way(around:500, ${lat}, ${lon})["shop"="mall"];
+        node(around:500, ${lat}, ${lon})["office"];
+        way(around:500, ${lat}, ${lon})["office"];
+        node(around:500, ${lat}, ${lon})["highway"="bus_stop"];
+        node(around:500, ${lat}, ${lon})["railway"="subway_entrance"];
+        way(around:500, ${lat}, ${lon})["building"="apartments"];
+      );
+      out center;
+    `;
+
+    const url = 'https://overpass-api.de/api/interpreter';
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            body: query
+        });
+        const data = await response.json();
+        return parseOverpassData(data);
+    } catch (e) {
+        console.error("Overpass API error:", e);
+        throw e;
+    }
+}
+
+function parseOverpassData(data) {
+    let summary = {
+        apartments: { count: 0, total_levels: 0 },
+        schools: 0,
+        universities: 0,
+        malls: 0,
+        offices: 0,
+        transport: { bus_stops: 0, subway: 0 },
+        competitors: []
+    };
+
+    if (!data.elements) return summary;
+
+    data.elements.forEach(el => {
+        const tags = el.tags || {};
+
+        // Residential
+        if (tags.building === 'apartments') {
+            summary.apartments.count++;
+            const levels = parseInt(tags['building:levels']);
+            if (!isNaN(levels)) {
+                summary.apartments.total_levels += levels;
+            } else {
+                summary.apartments.total_levels += 5; // Default estimate
+            }
+        }
+
+        // Amenities
+        if (tags.amenity === 'school') summary.schools++;
+        if (tags.amenity === 'university') summary.universities++;
+
+        // Malls
+        if (tags.shop === 'mall') summary.malls++;
+
+        // Offices
+        if (tags.office) summary.offices++;
+
+        // Transport
+        if (tags.highway === 'bus_stop') summary.transport.bus_stops++;
+        if (tags.railway === 'subway_entrance') summary.transport.subway++;
+
+        // Competitors
+        if (tags.amenity === 'fast_food' || tags.amenity === 'cafe') {
+            const name = tags.name || tags['name:ru'] || tags['name:en'] || 'Unnamed';
+            // Avoid duplicates slightly if multiple nodes for same place, but simple list is fine
+            summary.competitors.push(`${name} (${tags.amenity})`);
+        }
+    });
+
+    return summary;
+}
+
+let GEMINI_API_KEY = '';
+
+async function askGemini(summaryData, lat, lon) {
+    if (!GEMINI_API_KEY) {
+        GEMINI_API_KEY = prompt("Пожалуйста, введите ваш API Key для Google Gemini (AI Studio):");
+        if (!GEMINI_API_KEY) {
+            alert("API Key необходим для работы анализа.");
+            throw new Error("API Key required");
+        }
+    }
+
+    const systemPrompt = `
+Ты — Эксперт по локациям для фаст-фуда. Твоя цель — защита инвестиций.
+Я отправлю тебе JSON с данными вокруг точки (дома, школы, конкуренты).
+Твоя задача:
+1. Использовать Google Search для поиска новостей по этому району (координаты: ${lat}, ${lon}). Ищи проблемы: криминал, долгий ремонт дорог, скандалы.
+2. Проанализировать состав конкурентов. Если рядом McDonald's/KFC — это хорошо (они уже проверили трафик), если только шаурма — средний риск.
+3. Рассчитать "Confidence Score" (0-100%) открытия точки.
+
+ВЕРНИ ОТВЕТ СТРОГО В JSON:
+{
+  "score": 85,
+  "verdict": "Рекомендую к открытию",
+  "reasoning": {
+    "traffic": "Высокий (рядом ВУЗ + 2 остановки)",
+    "audience": "Студенты и офисные клерки (средний чек низкий, оборот высокий)",
+    "competition": "Умеренная (есть Burger King, значит трафик есть)"
+  },
+  "risks": ["В новостях пишут о ремонте теплотрассы летом — перекроют проход"],
+  "economics": {
+    "daily_checks": 350,
+    "monthly_revenue_kzt": 25000000
+  }
+}
+`;
+
+    const userPrompt = `Анализ локации (${lat}, ${lon}). Данные: ${JSON.stringify(summaryData)}`;
+
+    // Using gemini-2.0-flash-exp
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`;
+
+    const payload = {
+        system_instruction: {
+            parts: [{ text: systemPrompt }]
+        },
+        contents: [{
+            role: "user",
+            parts: [{ text: userPrompt }]
+        }],
+        tools: [{
+            google_search_retrieval: {
+                dynamic_retrieval_config: {
+                    mode: "mode_dynamic",
+                    dynamic_threshold: 0.6
+                }
+            }
+        }],
+        generationConfig: {
+            responseMimeType: "application/json"
+        }
+    };
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Gemini API Error: ${response.status} - ${errText}`);
+        }
+
+        const data = await response.json();
+        if (!data.candidates || data.candidates.length === 0) {
+             throw new Error("No candidates returned from Gemini");
+        }
+
+        const textPart = data.candidates[0].content.parts[0].text;
+        return JSON.parse(textPart);
+    } catch (e) {
+        console.error("Gemini interaction failed", e);
+        throw e;
+    }
+}
+
+// ---- UI Logic & Event Handling ----
+
+const tabEarthquakes = document.getElementById('tabEarthquakes');
+const tabAudit = document.getElementById('tabAudit');
+const contentEarthquakes = document.getElementById('contentEarthquakes');
+const contentAudit = document.getElementById('contentAudit');
+
+function switchTab(tab) {
+    if (tab === 'earthquakes') {
+        tabEarthquakes.classList.add('active');
+        tabAudit.classList.remove('active');
+        contentEarthquakes.classList.remove('hidden');
+        contentAudit.classList.add('hidden');
+        disableAuditMode();
+    } else {
+        tabEarthquakes.classList.remove('active');
+        tabAudit.classList.add('active');
+        contentEarthquakes.classList.add('hidden');
+        contentAudit.classList.remove('hidden');
+    }
+}
+
+if (tabEarthquakes && tabAudit) {
+    tabEarthquakes.addEventListener('click', () => switchTab('earthquakes'));
+    tabAudit.addEventListener('click', () => switchTab('audit'));
+}
+
+let auditModeEnabled = false;
+let auditMarker = null;
+
+const btnToggleAudit = document.getElementById('btnToggleAudit');
+
+if (btnToggleAudit) {
+    btnToggleAudit.addEventListener('click', () => {
+        auditModeEnabled = !auditModeEnabled;
+        updateAuditButtonState();
+    });
+}
+
+function updateAuditButtonState() {
+    const mapEl = document.getElementById('map');
+    if (auditModeEnabled) {
+        btnToggleAudit.innerText = "❌ Выключить режим (Кликните на карту)";
+        btnToggleAudit.classList.add('active');
+        mapEl.classList.add('map-cursor-audit');
+    } else {
+        btnToggleAudit.innerText = "📍 Начать анализ";
+        btnToggleAudit.classList.remove('active');
+        mapEl.classList.remove('map-cursor-audit');
+        if (auditMarker) {
+            map.removeLayer(auditMarker);
+            auditMarker = null;
+        }
+    }
+}
+
+function disableAuditMode() {
+    auditModeEnabled = false;
+    if (btnToggleAudit) updateAuditButtonState();
+}
+
+map.on('click', (e) => {
+    if (!auditModeEnabled) return;
+
+    const { lat, lng } = e.latlng;
+
+    if (auditMarker) {
+        auditMarker.setLatLng(e.latlng);
+    } else {
+        auditMarker = L.marker(e.latlng, { draggable: true }).addTo(map);
+    }
+
+    const popupContent = document.createElement('div');
+    popupContent.innerHTML = `
+        <div style="text-align:center;">
+            <b>Координаты:</b><br>${lat.toFixed(5)}, ${lng.toFixed(5)}<br><br>
+            <button id="btnRunAnalysis" class="primary-btn" style="padding: 5px 10px; font-size: 0.9em;">📊 Анализировать</button>
+        </div>
+    `;
+
+    auditMarker.bindPopup(popupContent).openPopup();
+});
+
+map.on('popupopen', (e) => {
+    const btn = document.getElementById('btnRunAnalysis');
+    if (btn) {
+        let latlng = e.popup.getLatLng();
+        if (!latlng && e.popup._source) {
+             latlng = e.popup._source.getLatLng();
+        }
+
+        btn.onclick = () => {
+             if(latlng) {
+                 runAnalysis(latlng);
+                 map.closePopup();
+             }
+        };
+    }
+});
+
+async function runAnalysis(latlng) {
+    const { lat, lng } = latlng;
+
+    // UI Update
+    document.getElementById('auditIntro').classList.add('hidden');
+    document.getElementById('auditResult').classList.add('hidden');
+    document.getElementById('auditLoading').classList.remove('hidden');
+
+    try {
+        // 1. Get Data
+        const summary = await getSurroundingData(lat, lng);
+
+        // 2. Ask AI
+        const aiResult = await askGemini(summary, lat, lng);
+
+        // 3. Render Result
+        renderAuditResult(aiResult);
+
+    } catch (error) {
+        console.error(error);
+        alert("Ошибка анализа: " + error.message);
+        document.getElementById('auditIntro').classList.remove('hidden');
+    } finally {
+        document.getElementById('auditLoading').classList.add('hidden');
+    }
+}
+
+function renderAuditResult(data) {
+    const container = document.getElementById('auditResult');
+    container.innerHTML = '';
+
+    // Score Color
+    let colorClass = 'score-yellow';
+    if (data.score >= 75) colorClass = 'score-green';
+    if (data.score < 40) colorClass = 'score-red';
+
+    const html = `
+        <div class="audit-score-card ${colorClass}">
+            <div style="font-size: 2.5rem; font-weight: bold;">${data.score}%</div>
+            <div style="font-size: 1.2rem;">${data.verdict}</div>
+        </div>
+
+        <div class="audit-section-title">📊 Обоснование</div>
+        <div style="font-size: 0.9em; margin-bottom: 10px;">
+            <p><b>Трафик:</b> ${data.reasoning.traffic}</p>
+            <p><b>Аудитория:</b> ${data.reasoning.audience}</p>
+            <p><b>Конкуренция:</b> ${data.reasoning.competition}</p>
+        </div>
+
+        <div class="audit-section-title">⚠️ Риски</div>
+        <ul style="font-size: 0.9em; padding-left: 20px;">
+            ${data.risks.map(r => `<li>${r}</li>`).join('')}
+        </ul>
+
+        <div class="audit-section-title">💰 Прогноз (мес.)</div>
+        <div class="stat-grid">
+            <div class="stat-item">
+                <div class="stat-val">${data.economics.daily_checks}</div>
+                <div class="stat-label">Чеков/день</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-val">${(data.economics.monthly_revenue_kzt / 1000000).toFixed(1)} млн ₸</div>
+                <div class="stat-label">Выручка</div>
+            </div>
+        </div>
+
+        <button id="btnResetAudit" class="primary-btn" style="margin-top: 15px; background-color: #6c757d;">🔄 Новый поиск</button>
+    `;
+
+    container.innerHTML = html;
+    container.classList.remove('hidden');
+
+    const btnReset = document.getElementById('btnResetAudit');
+    if(btnReset) {
+        btnReset.addEventListener('click', () => {
+            container.classList.add('hidden');
+            document.getElementById('auditIntro').classList.remove('hidden');
+        });
+    }
 }
 
 init();
