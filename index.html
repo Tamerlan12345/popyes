@@ -27,7 +27,12 @@
 
   <!-- Leaflet Heat -->
   <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
-
+<script>
+  // Caddy заменит {{.Env.GEMINI_API_KEY}} на реальный ключ при отдаче страницы
+  window.GEMINI_API_KEY = "{{.Env.GEMINI_API_KEY}}";
+</script>
+<script src="./app.js" defer></script>
+  
   <link rel="stylesheet" href="./style.css" />
   <link rel="icon" type="image/png" href="./logo.png">
 </head>
