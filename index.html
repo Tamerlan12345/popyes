@@ -5,37 +5,31 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Centras-Maps</title>
 
-  <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 
-  <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- Turf.js (Lazy Loaded or explicitly included if needed) -->
   <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
 
-  <!-- Leaflet.pattern -->
   <script src="leaflet.pattern.js"></script>
 
-  <!-- Leaflet.markercluster -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
   <script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
 
-  <!-- Leaflet Heat -->
   <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
-<script>
-  // Caddy заменит {{.Env.GEMINI_API_KEY}} на реальный ключ при отдаче страницы
-  window.GEMINI_API_KEY = "{{.Env.GEMINI_API_KEY}}";
-</script>
-<script src="./app.js" defer></script>
-  
+
   <link rel="stylesheet" href="./style.css" />
   <link rel="icon" type="image/png" href="./logo.png">
-</head>
+
+  <script>
+    // Используем синтаксис {{env "ИМЯ_ПЕРЕМЕННОЙ"}} вместо {{.Env.ИМЯ}}
+    window.GEMINI_API_KEY = "{{env "GEMINI_API_KEY"}}"; 
+  </script>
+  </head>
 <body>
 
   <div id="mainContent">
@@ -76,8 +70,7 @@
                 </div>
 
                 <div id="auditResult" class="hidden">
-                    <!-- Result will be injected here -->
-                </div>
+                    </div>
              </section>
         </div>
       </aside>
