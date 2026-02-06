@@ -553,44 +553,62 @@ async function askGemini(summaryData, lat, lon) {
         throw new Error("API Key required");
     }
 
-    // 1. Упрощаем системный промпт (переносим строгость в user prompt)
-    const systemPrompt = `Ты — бизнес-аналитик для сети фаст-фуда. Твоя задача — оценить локацию.`;
+    // --- СИСТЕМНАЯ РОЛЬ ---
+    const systemPrompt = `Ты — Стратегический консультант по развитию ресторанных сетей (Location Scout).
+Твоя специализация — глубокий анализ городской среды и психологии потребления.
+Ты не придумываешь цифры выручки, а анализируешь потенциал локации на основе фактов.`;
 
-    // 2. Формируем более четкий запрос
+    // --- НОВЫЙ, БОЛЕЕ ГЛУБОКИЙ ПРОМПТ ---
     const userPrompt = `
-    Проанализируй локацию с координатами: ${lat}, ${lon}.
-    
-    ДАННЫЕ ОКРУЖЕНИЯ:
+    Проведи профессиональный аудит локации для фаст-фуда/кофейни.
+    Координаты: ${lat}, ${lon}.
+
+    ДАННЫЕ ОБ ОКРУЖЕНИИ (из OpenStreetMap):
     ${JSON.stringify(summaryData)}
 
-    ЗАДАЧИ:
-    1. Используй Google Search, чтобы найти новости, отзывы о районе, криминальные сводки или планы застройки.
-    2. Оцени потенциал точки (Трафик, Конкуренция, Риски).
-    3. Сформируй финальный ответ СТРОГО В ФОРМАТЕ JSON.
+    ТВОИ ЗАДАЧИ:
+    1. ИСПОЛЬЗУЙ ПОИСК (Google Search):
+       - Найди, что это за район (названия ЖК, БЦ, ВУЗов рядом).
+       - Оцени "вайб" места: это шумный перекресток, тихий двор или офисный квартал?
+       - Проверь новости: нет ли там строек, перекрытий или проблем с безопасностью.
 
-    ФОРМАТ JSON (верни только этот объект, без Markdown):
+    2. СОСТАВЬ ПОРТРЕТ КЛИЕНТА (Avatar):
+       - Кто основной прохожий? (Студенты, клерки, рабочие, жители).
+       - Какова их потребность? (Быстрый перекус, место для свиданий, кофе с собой).
+       - Платежеспособность (Эконом / Средний / Премиум).
+
+    3. ДАЙ ОЦЕНКУ (БЕЗ ФИНАНСОВЫХ ЦИФР):
+       - Оцени пешеходный трафик (Низкий/Средний/Высокий) с обоснованием.
+       - Оцени конкуренцию: "Голубой океан" (пусто) или "Кровавый океан" (перенасыщение).
+
+    4. ФОРМАТ ОТВЕТА (СТРОГО JSON):
+    Верни только валидный JSON объект следующей структуры (не используй Markdown блоки \`\`\`json):
+
     {
-      "score": 85,
-      "verdict": "Рекомендую / Рискованно / Отказ",
-      "reasoning": { 
-          "traffic": "Текст оценки трафика...", 
-          "audience": "Описание аудитории...", 
-          "competition": "Оценка конкурентов..." 
+      "score": 0-100, // Общий балл привлекательности
+      "verdict": "Короткий вердикт (например: 'Идеально для кофе с собой')",
+      "location_vibe": "Описание атмосферы района (например: 'Студенческий хаб с высоким трафиком')",
+      "audience": {
+        "who": "Кто эти люди? (например: Студенты Политеха и сотрудники офисов)",
+        "needs": "Что им нужно? (например: Дешево, много, быстро)",
+        "peak_hours": "Когда будет наплыв? (например: Обед 13:00-14:00 и вечер 18:00)"
       },
-      "risks": ["Риск 1", "Риск 2"],
-      "economics": { 
-          "daily_checks": 100, 
-          "monthly_revenue_kzt": 1000000 
-      }
+      "analysis": {
+        "traffic_drivers": "Что притягивает людей? (ВУЗы, Остановки, ТЦ)",
+        "barriers": "Что мешает? (Заборы, подземные переходы, тупик)",
+        "competition_level": "Описание конкуренции (например: 'Много шаурмы, но нет нормального кофе')"
+      },
+      "marketing_advice": "Один крутой совет для этой точки (например: 'Сделайте комбо-обеды для студентов')"
     }
     `;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    // Используем модель 1.5-flash (она стабильнее с поиском)
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
     const payload = {
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-        tools: [{ google_search: {} }] // Оставляем поиск
+        tools: [{ google_search: {} }] // Включаем поиск для проверки новостей и названий мест
     };
 
     try {
@@ -606,50 +624,36 @@ async function askGemini(summaryData, lat, lon) {
         }
 
         const data = await response.json();
-        console.log("Full Gemini Response:", data);
-
-        if (!data.candidates || data.candidates.length === 0) {
-             throw new Error("No candidates returned from Gemini");
-        }
-
+        
+        // --- ОБРАБОТКА ОТВЕТА ---
+        if (!data.candidates || data.candidates.length === 0) throw new Error("No candidates");
+        
         const candidate = data.candidates[0];
+        if (candidate.finishReason === "SAFETY") throw new Error("Safety Block");
 
-        if (candidate.finishReason === "SAFETY") {
-            alert("Ответ заблокирован фильтрами безопасности Google.");
-            throw new Error("Safety Block");
-        }
-
-        // Пытаемся достать текст. Если использован поиск, текст может быть разбит на части.
-        // Собираем все текстовые части в одну строку.
+        // Собираем текст (иногда поиск разбивает ответ на части)
         let textPart = "";
         if (candidate.content && candidate.content.parts) {
-            textPart = candidate.content.parts
-                .map(p => p.text || "") // Берем только text, игнорируем functionCall
-                .join(" ");
+            textPart = candidate.content.parts.map(p => p.text || "").join(" ");
         }
 
-        console.log("Raw Text:", textPart);
+        if (!textPart.trim()) throw new Error("Empty response from AI");
 
-        if (!textPart.trim()) {
-             throw new Error("ИИ вернул пустой текст (возможно, только результаты поиска без выводов).");
-        }
+        console.log("Raw AI Response:", textPart);
 
-        // === ПАРСИНГ JSON ===
+        // --- ПАРСИНГ JSON ---
         const firstBrace = textPart.indexOf('{');
         const lastBrace = textPart.lastIndexOf('}');
 
         if (firstBrace === -1 || lastBrace === -1) {
-            // Если JSON не найден, пробуем вернуть ошибку как результат анализа
-            console.error("JSON extraction failed. Raw text:", textPart);
-            throw new Error("Не удалось найти JSON в ответе. Попробуйте еще раз.");
+             throw new Error("JSON not found in response");
         }
 
         const jsonString = textPart.substring(firstBrace, lastBrace + 1);
         return JSON.parse(jsonString);
 
     } catch (e) {
-        console.error("Gemini interaction failed", e);
-        // Выводим пользователю понятное сообщение
+        console.error("Analysis failed", e);
         alert("Ошибка анализа: " + e.message);
         throw e;
     }
@@ -786,39 +790,48 @@ function renderAuditResult(data) {
     const container = document.getElementById('auditResult');
     container.innerHTML = '';
 
-    // Score Color
+    // Цвета для светофора
     let colorClass = 'score-yellow';
     if (data.score >= 75) colorClass = 'score-green';
     if (data.score < 40) colorClass = 'score-red';
 
     const html = `
         <div class="audit-score-card ${colorClass}">
-            <div style="font-size: 2.5rem; font-weight: bold;">${data.score}%</div>
-            <div style="font-size: 1.2rem;">${data.verdict}</div>
+            <div style="font-size: 2.5rem; font-weight: bold;">${data.score}/100</div>
+            <div style="font-size: 1.1rem; opacity: 0.9;">${data.verdict}</div>
         </div>
 
-        <div class="audit-section-title">📊 Обоснование</div>
-        <div style="font-size: 0.9em; margin-bottom: 10px;">
-            <p><b>Трафик:</b> ${data.reasoning.traffic}</p>
-            <p><b>Аудитория:</b> ${data.reasoning.audience}</p>
-            <p><b>Конкуренция:</b> ${data.reasoning.competition}</p>
+        <div style="background: #f8fafc; padding: 10px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #3b82f6;">
+            <div class="audit-section-title" style="margin-top:0;">📍 Атмосфера (Vibe)</div>
+            <div style="font-size: 0.9em; font-style: italic;">"${data.location_vibe}"</div>
         </div>
 
-        <div class="audit-section-title">⚠️ Риски</div>
-        <ul style="font-size: 0.9em; padding-left: 20px;">
-            ${data.risks.map(r => `<li>${r}</li>`).join('')}
+        <div class="audit-section-title">👤 Портрет клиента</div>
+        <div class="stat-grid" style="grid-template-columns: 1fr; gap: 8px; text-align: left;">
+            <div class="stat-item" style="align-items: flex-start; padding: 10px;">
+                <div class="stat-label">Кто они?</div>
+                <div style="font-weight: 600;">${data.audience.who}</div>
+            </div>
+            <div class="stat-item" style="align-items: flex-start; padding: 10px;">
+                <div class="stat-label">Потребность</div>
+                <div>${data.audience.needs}</div>
+            </div>
+            <div class="stat-item" style="align-items: flex-start; padding: 10px;">
+                <div class="stat-label">Пик трафика</div>
+                <div>⏰ ${data.audience.peak_hours}</div>
+            </div>
+        </div>
+
+        <div class="audit-section-title">📊 Глубокий анализ</div>
+        <ul style="font-size: 0.9em; padding-left: 20px; color: #334155;">
+            <li style="margin-bottom: 5px;"><b>Магнит трафика:</b> ${data.analysis.traffic_drivers}</li>
+            <li style="margin-bottom: 5px;"><b>Барьеры:</b> ${data.analysis.barriers}</li>
+            <li style="margin-bottom: 5px;"><b>Конкуренция:</b> ${data.analysis.competition_level}</li>
         </ul>
 
-        <div class="audit-section-title">💰 Прогноз (мес.)</div>
-        <div class="stat-grid">
-            <div class="stat-item">
-                <div class="stat-val">${data.economics.daily_checks}</div>
-                <div class="stat-label">Чеков/день</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-val">${(data.economics.monthly_revenue_kzt / 1000000).toFixed(1)} млн ₸</div>
-                <div class="stat-label">Выручка</div>
-            </div>
+        <div style="margin-top: 15px; padding: 12px; background: #ecfdf5; border-radius: 8px; border: 1px solid #10b981;">
+            <div style="color: #047857; font-weight: bold; font-size: 0.9em;">💡 Совет маркетолога:</div>
+            <div style="font-size: 0.9em; color: #065f46;">${data.marketing_advice}</div>
         </div>
 
         <button id="btnResetAudit" class="primary-btn" style="margin-top: 15px; background-color: #6c757d;">🔄 Новый поиск</button>
