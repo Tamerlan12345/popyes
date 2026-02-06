@@ -544,15 +544,15 @@ function parseOverpassData(data) {
     return summary;
 }
 
-let GEMINI_API_KEY = '';
-
 async function askGemini(summaryData, lat, lon) {
-    if (!GEMINI_API_KEY) {
-        GEMINI_API_KEY = prompt("Пожалуйста, введите ваш API Key для Google Gemini (AI Studio):");
-        if (!GEMINI_API_KEY) {
-            alert("API Key необходим для работы анализа.");
-            throw new Error("API Key required");
-        }
+    // 1. ИСПОЛЬЗУЕМ КЛЮЧ ИЗ WINDOW (переданный через Caddy)
+    const apiKey = window.GEMINI_API_KEY;
+
+    // Проверка наличия ключа
+    if (!apiKey || apiKey.includes("Env.GEMINI_API_KEY") || apiKey.trim() === "") {
+        console.error("API Key не найден! Убедитесь, что переменная окружения GEMINI_API_KEY задана в start.sh или Docker.");
+        alert("Ошибка настройки сервера: API Key не найден.");
+        throw new Error("API Key required");
     }
 
     const systemPrompt = `
@@ -582,8 +582,8 @@ async function askGemini(summaryData, lat, lon) {
 
     const userPrompt = `Анализ локации (${lat}, ${lon}). Данные: ${JSON.stringify(summaryData)}`;
 
-    // Using gemini-2.0-flash-exp
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`;
+    // 2. ИСПОЛЬЗУЕМ СТАБИЛЬНУЮ МОДЕЛЬ (gemini-2.0-flash) ВМЕСТО EXP
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
     const payload = {
         system_instruction: {
