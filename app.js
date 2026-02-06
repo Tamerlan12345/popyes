@@ -545,42 +545,53 @@ function parseOverpassData(data) {
 }
 
 async function askGemini(summaryData, lat, lon) {
-    // 1. ИСПОЛЬЗУЕМ КЛЮЧ ИЗ WINDOW
     const apiKey = window.GEMINI_API_KEY;
 
-    // Проверка наличия ключа
     if (!apiKey || apiKey.includes("Env.GEMINI_API_KEY") || apiKey.trim() === "") {
         console.error("API Key не найден!");
         alert("Ошибка: API Key не найден.");
         throw new Error("API Key required");
     }
 
-    const systemPrompt = `
-Ты — Эксперт по локациям для фаст-фуда.
-Данные локации: ${lat}, ${lon}.
-Задача:
-1. Найди в Google новости и проблемы района (пробки, криминал, стройки).
-2. Оцени конкуренцию и трафик.
-3. Дай вердикт.
+    // 1. Упрощаем системный промпт (переносим строгость в user prompt)
+    const systemPrompt = `Ты — бизнес-аналитик для сети фаст-фуда. Твоя задача — оценить локацию.`;
 
-ВЕРНИ ОТВЕТ ТОЛЬКО В ФОРМАТЕ JSON, без Markdown форматирования, без кавычек вокруг блока кода.
-Пример:
-{
-  "score": 85,
-  "verdict": "Рекомендую",
-  "reasoning": { "traffic": "Высокий", "audience": "Студенты", "competition": "Низкая" },
-  "risks": ["Ремонт дороги"],
-  "economics": { "daily_checks": 350, "monthly_revenue_kzt": 25000000 }
-}`;
+    // 2. Формируем более четкий запрос
+    const userPrompt = `
+    Проанализируй локацию с координатами: ${lat}, ${lon}.
+    
+    ДАННЫЕ ОКРУЖЕНИЯ:
+    ${JSON.stringify(summaryData)}
 
-    const userPrompt = `Данные окружения: ${JSON.stringify(summaryData)}`;
+    ЗАДАЧИ:
+    1. Используй Google Search, чтобы найти новости, отзывы о районе, криминальные сводки или планы застройки.
+    2. Оцени потенциал точки (Трафик, Конкуренция, Риски).
+    3. Сформируй финальный ответ СТРОГО В ФОРМАТЕ JSON.
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+    ФОРМАТ JSON (верни только этот объект, без Markdown):
+    {
+      "score": 85,
+      "verdict": "Рекомендую / Рискованно / Отказ",
+      "reasoning": { 
+          "traffic": "Текст оценки трафика...", 
+          "audience": "Описание аудитории...", 
+          "competition": "Оценка конкурентов..." 
+      },
+      "risks": ["Риск 1", "Риск 2"],
+      "economics": { 
+          "daily_checks": 100, 
+          "monthly_revenue_kzt": 1000000 
+      }
+    }
+    `;
+
+    // 3. ИСПОЛЬЗУЕМ СТАБИЛЬНУЮ МОДЕЛЬ gemini-1.5-flash
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
     const payload = {
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-        tools: [{ google_search: {} }] // Включен поиск
+        tools: [{ google_search: {} }] // Оставляем поиск
     };
 
     try {
@@ -596,8 +607,6 @@ async function askGemini(summaryData, lat, lon) {
         }
 
         const data = await response.json();
-        
-        // Логируем полный ответ для отладки
         console.log("Full Gemini Response:", data);
 
         if (!data.candidates || data.candidates.length === 0) {
@@ -606,44 +615,43 @@ async function askGemini(summaryData, lat, lon) {
 
         const candidate = data.candidates[0];
 
-        // Проверка на блокировку (Safety)
         if (candidate.finishReason === "SAFETY") {
-            alert("Google AI заблокировал ответ из-за настроек безопасности.");
-            throw new Error("Gemini Refusal: Safety");
+            alert("Ответ заблокирован фильтрами безопасности Google.");
+            throw new Error("Safety Block");
         }
 
-        // Проверка наличия текста
-        if (!candidate.content || !candidate.content.parts || candidate.content.parts.length === 0) {
-            throw new Error("Gemini returned empty content parts.");
+        // Пытаемся достать текст. Если использован поиск, текст может быть разбит на части.
+        // Собираем все текстовые части в одну строку.
+        let textPart = "";
+        if (candidate.content && candidate.content.parts) {
+            textPart = candidate.content.parts
+                .map(p => p.text || "") // Берем только text, игнорируем functionCall
+                .join(" ");
         }
 
-        let textPart = candidate.content.parts[0].text;
+        console.log("Raw Text:", textPart);
 
-        if (!textPart) {
-             throw new Error("Gemini returned empty text string.");
+        if (!textPart.trim()) {
+             throw new Error("ИИ вернул пустой текст (возможно, только результаты поиска без выводов).");
         }
 
-        console.log("Raw Text from Gemini:", textPart);
-
-        // === БРОНЕБОЙНЫЙ ПАРСИНГ JSON ===
-        // 1. Ищем первую фигурную скобку
+        // === ПАРСИНГ JSON ===
         const firstBrace = textPart.indexOf('{');
-        // 2. Ищем последнюю фигурную скобку
         const lastBrace = textPart.lastIndexOf('}');
 
         if (firstBrace === -1 || lastBrace === -1) {
-            throw new Error("JSON не найден в ответе ИИ. Ответ был: " + textPart);
+            // Если JSON не найден, пробуем вернуть ошибку как результат анализа
+            console.error("JSON extraction failed. Raw text:", textPart);
+            throw new Error("Не удалось найти JSON в ответе. Попробуйте еще раз.");
         }
 
-        // 3. Вырезаем только JSON
         const jsonString = textPart.substring(firstBrace, lastBrace + 1);
-
-        // 4. Парсим
         return JSON.parse(jsonString);
 
     } catch (e) {
         console.error("Gemini interaction failed", e);
-        alert("Ошибка AI: " + e.message);
+        // Выводим пользователю понятное сообщение
+        alert("Ошибка анализа: " + e.message);
         throw e;
     }
 }
