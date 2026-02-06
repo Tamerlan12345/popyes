@@ -592,15 +592,11 @@ async function askGemini(summaryData, lat, lon) {
             role: "user",
             parts: [{ text: userPrompt }]
         }],
+        // === ИСПРАВЛЕНИЕ ЗДЕСЬ ===
         tools: [{
-            google_search_retrieval: {
-                dynamic_retrieval_config: {
-                    mode: "mode_dynamic",
-                    dynamic_threshold: 0.6
-                }
-            }
+            google_search: {} // Теперь этот параметр называется google_search
         }]
-        // УБРАЛИ generationConfig с json mode, чтобы работал поиск
+        // =========================
     };
 
     try {
@@ -624,10 +620,9 @@ async function askGemini(summaryData, lat, lon) {
         let textPart = data.candidates[0].content.parts[0].text;
 
         // === ОЧИСТКА ОТ MARKDOWN ===
-        // Gemini часто пишет ```json { ... } ```. Нам нужно убрать эти кавычки.
+        // Убираем ```json и ``` чтобы распарсить ответ
         textPart = textPart.replace(/```json/g, "").replace(/```/g, "").trim();
 
-        // Пробуем распарсить
         return JSON.parse(textPart);
 
     } catch (e) {
