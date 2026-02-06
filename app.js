@@ -545,34 +545,34 @@ function parseOverpassData(data) {
 }
 
 async function askGemini(summaryData, lat, lon) {
-    // 1. ИСПОЛЬЗУЕМ КЛЮЧ ИЗ WINDOW (переданный через Caddy)
+    // 1. ИСПОЛЬЗУЕМ КЛЮЧ ИЗ WINDOW
     const apiKey = window.GEMINI_API_KEY;
 
     // Проверка наличия ключа
     if (!apiKey || apiKey.includes("Env.GEMINI_API_KEY") || apiKey.trim() === "") {
-        console.error("API Key не найден! Убедитесь, что переменная окружения GEMINI_API_KEY задана в start.sh или Docker.");
-        alert("Ошибка настройки сервера: API Key не найден.");
+        console.error("API Key не найден! Убедитесь, что переменная окружения GEMINI_API_KEY задана.");
+        alert("Ошибка: API Key не найден. Проверьте настройки сервера.");
         throw new Error("API Key required");
     }
 
     const systemPrompt = `
 Ты — Эксперт по локациям для фаст-фуда. Твоя цель — защита инвестиций.
-Я отправлю тебе JSON с данными вокруг точки (дома, школы, конкуренты).
+Я отправлю тебе JSON с данными вокруг точки.
 Твоя задача:
-1. Использовать Google Search для поиска новостей по этому району (координаты: ${lat}, ${lon}). Ищи проблемы: криминал, долгий ремонт дорог, скандалы.
-2. Проанализировать состав конкурентов. Если рядом McDonald's/KFC — это хорошо (они уже проверили трафик), если только шаурма — средний риск.
-3. Рассчитать "Confidence Score" (0-100%) открытия точки.
+1. Использовать Google Search для поиска актуальных новостей, отзывов и проблем района (координаты: ${lat}, ${lon}).
+2. Проанализировать конкурентов и трафик.
+3. Вернуть ответ СТРОГО в формате JSON без лишнего текста.
 
-ВЕРНИ ОТВЕТ СТРОГО В JSON:
+Пример формата JSON:
 {
   "score": 85,
-  "verdict": "Рекомендую к открытию",
+  "verdict": "Рекомендую",
   "reasoning": {
-    "traffic": "Высокий (рядом ВУЗ + 2 остановки)",
-    "audience": "Студенты и офисные клерки (средний чек низкий, оборот высокий)",
-    "competition": "Умеренная (есть Burger King, значит трафик есть)"
+    "traffic": "Высокий",
+    "audience": "Студенты",
+    "competition": "Низкая"
   },
-  "risks": ["В новостях пишут о ремонте теплотрассы летом — перекроют проход"],
+  "risks": ["Ремонт дороги"],
   "economics": {
     "daily_checks": 350,
     "monthly_revenue_kzt": 25000000
@@ -582,7 +582,6 @@ async function askGemini(summaryData, lat, lon) {
 
     const userPrompt = `Анализ локации (${lat}, ${lon}). Данные: ${JSON.stringify(summaryData)}`;
 
-    // 2. ИСПОЛЬЗУЕМ СТАБИЛЬНУЮ МОДЕЛЬ (gemini-2.0-flash) ВМЕСТО EXP
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
     const payload = {
@@ -600,18 +599,14 @@ async function askGemini(summaryData, lat, lon) {
                     dynamic_threshold: 0.6
                 }
             }
-        }],
-        generationConfig: {
-            responseMimeType: "application/json"
-        }
+        }]
+        // УБРАЛИ generationConfig с json mode, чтобы работал поиск
     };
 
     try {
         const response = await fetch(url, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
 
@@ -625,8 +620,16 @@ async function askGemini(summaryData, lat, lon) {
              throw new Error("No candidates returned from Gemini");
         }
 
-        const textPart = data.candidates[0].content.parts[0].text;
+        // Получаем текст ответа
+        let textPart = data.candidates[0].content.parts[0].text;
+
+        // === ОЧИСТКА ОТ MARKDOWN ===
+        // Gemini часто пишет ```json { ... } ```. Нам нужно убрать эти кавычки.
+        textPart = textPart.replace(/```json/g, "").replace(/```/g, "").trim();
+
+        // Пробуем распарсить
         return JSON.parse(textPart);
+
     } catch (e) {
         console.error("Gemini interaction failed", e);
         throw e;
