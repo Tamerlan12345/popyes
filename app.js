@@ -461,8 +461,9 @@ async function init() {
 // ---- Smart Location Analysis ----
 
 async function getSurroundingData(lat, lon) {
+    // Увеличили таймаут до 45 секунд
     const query = `
-      [out:json][timeout:25];
+      [out:json][timeout:45];
       (
         node(around:500, ${lat}, ${lon})["amenity"~"fast_food|cafe|school|university"];
         way(around:500, ${lat}, ${lon})["amenity"~"fast_food|cafe|school|university"];
@@ -483,12 +484,34 @@ async function getSurroundingData(lat, lon) {
         const response = await fetch(url, {
             method: 'POST',
             body: query
+            // Убрали headers, чтобы избежать лишних проблем с CORS/OPTIONS
         });
-        const data = await response.json();
-        return parseOverpassData(data);
+
+        if (!response.ok) {
+            console.warn(`Overpass API returned status ${response.status}. Skipping map data.`);
+            return null; // Возвращаем null, но НЕ ошибку, чтобы программа работала дальше
+        }
+
+        const text = await response.text();
+        
+        // Проверяем, не вернул ли сервер HTML (ошибку) вместо JSON
+        if (text.trim().startsWith('<')) {
+             console.warn("Overpass API returned HTML error. Skipping.");
+             return null;
+        }
+
+        try {
+            const data = JSON.parse(text);
+            return parseOverpassData(data);
+        } catch (jsonError) {
+            console.warn("Failed to parse Overpass JSON:", jsonError);
+            return null;
+        }
+
     } catch (e) {
-        console.error("Overpass API error:", e);
-        throw e;
+        console.error("Overpass API connection failed:", e);
+        // Не выбрасываем ошибку (throw e), а возвращаем null, чтобы Gemini мог работать через поиск
+        return null; 
     }
 }
 
@@ -553,62 +576,52 @@ async function askGemini(summaryData, lat, lon) {
         throw new Error("API Key required");
     }
 
-    // --- СИСТЕМНАЯ РОЛЬ ---
-    const systemPrompt = `Ты — Стратегический консультант по развитию ресторанных сетей (Location Scout).
-Твоя специализация — глубокий анализ городской среды и психологии потребления.
-Ты не придумываешь цифры выручки, а анализируешь потенциал локации на основе фактов.`;
+    // Если данные с карты не пришли (null), пишем об этом ИИ
+    const mapDataText = summaryData 
+        ? JSON.stringify(summaryData) 
+        : "НЕТ ДАННЫХ С КАРТЫ (OSM недоступен). Ориентируйся ТОЛЬКО на Google Search.";
 
-    // --- НОВЫЙ, БОЛЕЕ ГЛУБОКИЙ ПРОМПТ ---
+    const systemPrompt = `Ты — Стратегический консультант по локациям.`;
+
     const userPrompt = `
-    Проведи профессиональный аудит локации для фаст-фуда/кофейни.
-    Координаты: ${lat}, ${lon}.
+    АУДИТ ЛОКАЦИИ: ${lat}, ${lon}.
 
-    ДАННЫЕ ОБ ОКРУЖЕНИИ (из OpenStreetMap):
-    ${JSON.stringify(summaryData)}
+    ДАННЫЕ OSM: ${mapDataText}
 
-    ТВОИ ЗАДАЧИ:
-    1. ИСПОЛЬЗУЙ ПОИСК (Google Search):
-       - Найди, что это за район (названия ЖК, БЦ, ВУЗов рядом).
-       - Оцени "вайб" места: это шумный перекресток, тихий двор или офисный квартал?
-       - Проверь новости: нет ли там строек, перекрытий или проблем с безопасностью.
+    ЗАДАЧА:
+    1. Используй Google Search для анализа района (названия ЖК, ВУЗов, трафик, новости).
+    2. Составь портрет клиента и оцени конкуренцию.
 
-    2. СОСТАВЬ ПОРТРЕТ КЛИЕНТА (Avatar):
-       - Кто основной прохожий? (Студенты, клерки, рабочие, жители).
-       - Какова их потребность? (Быстрый перекус, место для свиданий, кофе с собой).
-       - Платежеспособность (Эконом / Средний / Премиум).
+    ВАЖНОЕ ТРЕБОВАНИЕ К ФОРМАТУ JSON:
+    - СТРОГО запрещено использовать двойные кавычки (") внутри значений строк. Используй одинарные (') или типографские (« »).
+    - Пример ОШИБКИ: "text": "Кафе "Сказка"" (ЭТО СЛОМАЕТ JSON)
+    - Пример ПРАВИЛЬНО: "text": "Кафе 'Сказка'" (ЭТО ПРАВИЛЬНО)
 
-    3. ДАЙ ОЦЕНКУ (БЕЗ ФИНАНСОВЫХ ЦИФР):
-       - Оцени пешеходный трафик (Низкий/Средний/Высокий) с обоснованием.
-       - Оцени конкуренцию: "Голубой океан" (пусто) или "Кровавый океан" (перенасыщение).
-
-    4. ФОРМАТ ОТВЕТА (СТРОГО JSON):
-    Верни только валидный JSON объект следующей структуры (не используй Markdown блоки \`\`\`json):
-
+    ВЕРНИ ТОЛЬКО JSON ОБЪЕКТ:
     {
-      "score": 0-100, // Общий балл привлекательности
-      "verdict": "Короткий вердикт (например: 'Идеально для кофе с собой')",
-      "location_vibe": "Описание атмосферы района (например: 'Студенческий хаб с высоким трафиком')",
+      "score": 0-100,
+      "verdict": "Текст...",
+      "location_vibe": "Текст...",
       "audience": {
-        "who": "Кто эти люди? (например: Студенты Политеха и сотрудники офисов)",
-        "needs": "Что им нужно? (например: Дешево, много, быстро)",
-        "peak_hours": "Когда будет наплыв? (например: Обед 13:00-14:00 и вечер 18:00)"
+        "who": "Текст...",
+        "needs": "Текст...",
+        "peak_hours": "Текст..."
       },
       "analysis": {
-        "traffic_drivers": "Что притягивает людей? (ВУЗы, Остановки, ТЦ)",
-        "barriers": "Что мешает? (Заборы, подземные переходы, тупик)",
-        "competition_level": "Описание конкуренции (например: 'Много шаурмы, но нет нормального кофе')"
+        "traffic_drivers": "Текст...",
+        "barriers": "Текст...",
+        "competition_level": "Текст..."
       },
-      "marketing_advice": "Один крутой совет для этой точки (например: 'Сделайте комбо-обеды для студентов')"
+      "marketing_advice": "Текст..."
     }
     `;
 
-    // Используем модель 1.5-flash (она стабильнее с поиском)
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
     const payload = {
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-        tools: [{ google_search: {} }] // Включаем поиск для проверки новостей и названий мест
+        tools: [{ google_search: {} }]
     };
 
     try {
@@ -625,23 +638,20 @@ async function askGemini(summaryData, lat, lon) {
 
         const data = await response.json();
         
-        // --- ОБРАБОТКА ОТВЕТА ---
         if (!data.candidates || data.candidates.length === 0) throw new Error("No candidates");
-        
         const candidate = data.candidates[0];
         if (candidate.finishReason === "SAFETY") throw new Error("Safety Block");
 
-        // Собираем текст (иногда поиск разбивает ответ на части)
         let textPart = "";
         if (candidate.content && candidate.content.parts) {
             textPart = candidate.content.parts.map(p => p.text || "").join(" ");
         }
 
-        if (!textPart.trim()) throw new Error("Empty response from AI");
+        if (!textPart.trim()) throw new Error("Empty AI response");
 
         console.log("Raw AI Response:", textPart);
 
-        // --- ПАРСИНГ JSON ---
+        // --- ПАРСИНГ ---
         const firstBrace = textPart.indexOf('{');
         const lastBrace = textPart.lastIndexOf('}');
 
@@ -649,12 +659,26 @@ async function askGemini(summaryData, lat, lon) {
              throw new Error("JSON not found in response");
         }
 
-        const jsonString = textPart.substring(firstBrace, lastBrace + 1);
-        return JSON.parse(jsonString);
+        // Попытка очистить JSON от частых ошибок (если ИИ все же накосячил)
+        let jsonString = textPart.substring(firstBrace, lastBrace + 1);
+        
+        try {
+            return JSON.parse(jsonString);
+        } catch (e) {
+            console.warn("Первичный парсинг не удался, пробуем исправить кавычки...", e);
+            // Экстренная попытка исправить: заменяем \" на ' внутри строки (очень грубо, но может спасти)
+            // Но лучше просто попросить пользователя повторить, так как регулярками чистить JSON сложно.
+            throw new Error("Ошибка чтения JSON от ИИ. Попробуйте еще раз. (ИИ использовал некорректные символы)");
+        }
 
     } catch (e) {
         console.error("Analysis failed", e);
-        alert("Ошибка анализа: " + e.message);
+        // Если совсем всё плохо, возвращаем заглушку, чтобы интерфейс не завис
+        if (e.message.includes("Overpass")) {
+             alert("Сервер карт не отвечает. Попробуйте позже.");
+        } else {
+             alert("Ошибка анализа: " + e.message);
+        }
         throw e;
     }
 }
