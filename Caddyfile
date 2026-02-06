@@ -1,12 +1,13 @@
 :{$PORT} {
     # Устанавливаем корневую папку для сервера
    root * .
-
-    # Включаем файловый сервер
+   # Включаем файловый сервер
    file_server
 
     # Управляем заголовками
    header {
-        Content-Security-Policy "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://googleapis.com https://earthquake.usgs.gov https://api.open-meteo.com https://tile.openstreetmap.org; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://earthquake.usgs.gov https://api.open-meteo.com https://tile.openstreetmap.org https://unpkg.com; img-src 'self' data: https://unpkg.com https://*.tile.openstreetmap.org;"
+        # Добавляем https://overpass-api.de и https://generativelanguage.googleapis.com (для Gemini) в connect-src
+        # Добавляем https://server.arcgisonline.com в img-src для спутниковых снимков
+        Content-Security-Policy "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://googleapis.com https://earthquake.usgs.gov https://api.open-meteo.com https://tile.openstreetmap.org; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://earthquake.usgs.gov https://api.open-meteo.com https://tile.openstreetmap.org https://unpkg.com https://overpass-api.de https://generativelanguage.googleapis.com; img-src 'self' data: https://unpkg.com https://*.tile.openstreetmap.org https://server.arcgisonline.com;"
    }
 }
