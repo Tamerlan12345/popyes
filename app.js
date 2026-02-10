@@ -465,15 +465,28 @@ async function getSurroundingData(lat, lon) {
     const query = `
       [out:json][timeout:45];
       (
-        node(around:500, ${lat}, ${lon})["amenity"~"fast_food|cafe|school|university"];
-        way(around:500, ${lat}, ${lon})["amenity"~"fast_food|cafe|school|university"];
-        node(around:500, ${lat}, ${lon})["shop"="mall"];
-        way(around:500, ${lat}, ${lon})["shop"="mall"];
+        node(around:500, ${lat}, ${lon})["amenity"~"fast_food|cafe|restaurant|pub|bar|food_court|biergarten"];
+        way(around:500, ${lat}, ${lon})["amenity"~"fast_food|cafe|restaurant|pub|bar|food_court|biergarten"];
+
+        node(around:500, ${lat}, ${lon})["amenity"~"school|university|college|kindergarten"];
+        way(around:500, ${lat}, ${lon})["amenity"~"school|university|college|kindergarten"];
+
+        node(around:500, ${lat}, ${lon})["shop"~"mall|supermarket|marketplace"];
+        way(around:500, ${lat}, ${lon})["shop"~"mall|supermarket|marketplace"];
+
         node(around:500, ${lat}, ${lon})["office"];
         way(around:500, ${lat}, ${lon})["office"];
+
         node(around:500, ${lat}, ${lon})["highway"="bus_stop"];
         node(around:500, ${lat}, ${lon})["railway"="subway_entrance"];
-        way(around:500, ${lat}, ${lon})["building"="apartments"];
+
+        way(around:500, ${lat}, ${lon})["building"~"apartments|residential"];
+
+        node(around:500, ${lat}, ${lon})["landuse"~"cemetery|industrial|garages|landfill|brownfield"];
+        way(around:500, ${lat}, ${lon})["landuse"~"cemetery|industrial|garages|landfill|brownfield"];
+
+        node(around:500, ${lat}, ${lon})["amenity"~"prison|grave_yard|waste_disposal|mortuary"];
+        way(around:500, ${lat}, ${lon})["amenity"~"prison|grave_yard|waste_disposal|mortuary"];
       );
       out center;
     `;
@@ -502,7 +515,7 @@ async function getSurroundingData(lat, lon) {
 
         try {
             const data = JSON.parse(text);
-            return parseOverpassData(data);
+            return parseOverpassData(data, lat, lon);
         } catch (jsonError) {
             console.warn("Failed to parse Overpass JSON:", jsonError);
             return null;
@@ -515,59 +528,123 @@ async function getSurroundingData(lat, lon) {
     }
 }
 
-function parseOverpassData(data) {
+function parseOverpassData(data, centerLat, centerLon) {
     let summary = {
+        population: 0,
         apartments: { count: 0, total_levels: 0 },
         schools: 0,
         universities: 0,
         malls: 0,
         offices: 0,
         transport: { bus_stops: 0, subway: 0 },
-        competitors: []
+        competitors: [],
+        anchors: [],
+        negatives: [],
+        hasRedFlag: false,
+        redFlagReason: null,
+        lowDensity: false
     };
 
     if (!data.elements) return summary;
 
+    let residentialCount300m = 0;
+    let officeCount300m = 0;
+
     data.elements.forEach(el => {
         const tags = el.tags || {};
 
-        // Residential
-        if (tags.building === 'apartments') {
-            summary.apartments.count++;
-            const levels = parseInt(tags['building:levels']);
-            if (!isNaN(levels)) {
-                summary.apartments.total_levels += levels;
-            } else {
-                summary.apartments.total_levels += 5; // Default estimate
-            }
+        let lat = el.lat;
+        let lon = el.lon;
+        if (!lat && el.center) {
+            lat = el.center.lat;
+            lon = el.center.lon;
         }
 
-        // Amenities
-        if (tags.amenity === 'school') summary.schools++;
-        if (tags.amenity === 'university') summary.universities++;
+        if (!lat || !lon) return;
 
-        // Malls
-        if (tags.shop === 'mall') summary.malls++;
+        // Use existing calculateDistance (returns KM) -> convert to Meters
+        const dist = calculateDistance(centerLat, centerLon, lat, lon) * 1000;
 
-        // Offices
-        if (tags.office) summary.offices++;
+        // --- 1. Population (Heuristic) ---
+        if (tags.building === 'apartments' || tags.building === 'residential') {
+            summary.apartments.count++;
+            let levels = parseInt(tags['building:levels']);
+            if (isNaN(levels)) levels = 5;
+            summary.apartments.total_levels += levels;
+            summary.population += (levels * 4); // 4 people per floor/unit footprint approx
 
-        // Transport
-        if (tags.highway === 'bus_stop') summary.transport.bus_stops++;
-        if (tags.railway === 'subway_entrance') summary.transport.subway++;
+            if (dist <= 300) residentialCount300m++;
+        }
+
+        // --- 2. Categorization ---
 
         // Competitors
-        if (tags.amenity === 'fast_food' || tags.amenity === 'cafe') {
+        if (['fast_food', 'cafe', 'restaurant', 'pub', 'bar', 'food_court', 'biergarten'].includes(tags.amenity)) {
             const name = tags.name || tags['name:ru'] || tags['name:en'] || 'Unnamed';
-            // Avoid duplicates slightly if multiple nodes for same place, but simple list is fine
-            summary.competitors.push(`${name} (${tags.amenity})`);
+            summary.competitors.push(`${name} (${tags.amenity}) - ${Math.round(dist)}m`);
+        }
+
+        // Anchors
+        let isAnchor = false;
+        if (['school', 'university', 'college', 'kindergarten'].includes(tags.amenity)) {
+            summary.schools++;
+            isAnchor = true;
+        }
+        if (tags.amenity === 'university') summary.universities++;
+
+        if (['mall', 'supermarket', 'marketplace'].includes(tags.shop)) {
+            summary.malls++;
+            isAnchor = true;
+        }
+
+        if (tags.office) {
+            summary.offices++;
+            isAnchor = true;
+            if (dist <= 300) officeCount300m++;
+        }
+
+        if (tags.highway === 'bus_stop') {
+            summary.transport.bus_stops++;
+            isAnchor = true;
+        }
+        if (tags.railway === 'subway_entrance') {
+            summary.transport.subway++;
+            isAnchor = true;
+        }
+
+        if (isAnchor) {
+            const name = tags.name || tags['name:ru'] || tags['name:en'] || tags.amenity || tags.shop || tags.office;
+            summary.anchors.push(`${name} (${Math.round(dist)}m)`);
+        }
+
+        // Negatives & Red Flags
+        let isNegative = false;
+        const negativeLanduse = ['cemetery', 'industrial', 'garages', 'landfill', 'brownfield'];
+        const negativeAmenity = ['prison', 'grave_yard', 'waste_disposal', 'mortuary'];
+
+        if (negativeLanduse.includes(tags.landuse) || negativeAmenity.includes(tags.amenity)) {
+            isNegative = true;
+            const name = tags.name || tags.landuse || tags.amenity;
+            summary.negatives.push(`${name} (${Math.round(dist)}m)`);
+
+            if (dist <= 100) {
+                summary.hasRedFlag = true;
+                if (!summary.redFlagReason) {
+                    summary.redFlagReason = `Обнаружен запретный объект: ${name} в радиусе ${Math.round(dist)}м`;
+                }
+            }
         }
     });
+
+    // --- 3. Density Check ---
+    if (residentialCount300m === 0 && officeCount300m === 0) {
+        summary.lowDensity = true;
+    }
 
     return summary;
 }
 
-async function askGemini(summaryData, lat, lon, address) { // <--- Добавили address
+async function askGemini(summaryData, lat, lon, address, locationType, visualTraffic, densityWarning) {
     const apiKey = window.GEMINI_API_KEY;
 
     if (!apiKey || apiKey.includes("Env.GEMINI_API_KEY") || apiKey.trim() === "") {
@@ -577,45 +654,64 @@ async function askGemini(summaryData, lat, lon, address) { // <--- Добави�
     }
 
     const mapDataText = summaryData 
-        ? JSON.stringify(summaryData) 
+        ? JSON.stringify({
+            population_estimate: summaryData.population,
+            competitors: summaryData.competitors,
+            anchors: summaryData.anchors,
+            negatives: summaryData.negatives,
+            transport: summaryData.transport,
+            low_density_flag: summaryData.lowDensity
+          }, null, 2)
         : "НЕТ ДАННЫХ С КАРТЫ (OSM недоступен).";
 
-    const systemPrompt = `Ты — Стратегический консультант по локациям и являешься менеджером по разивтию сети быстрого питания.`;
+    const systemPrompt = `
+    Ты — циничный и скептический риск-менеджер, инвестиционный аналитик QSR сетей (Fast Food).
+    Твоя задача — найти причины ОТКАЗАТЬ в открытии точки. Ты не веришь в успех, пока факты не докажут обратное.
+    Структура анализа: Сначала ищи МИНУСЫ (Стоп-факторы), потом Плюсы.
+    Оценка 0-100. Будь строгим. 60 баллов — это уже хорошо. 80 — идеально.
+    `;
 
-    // --- ОБНОВЛЕННЫЙ ПРОМПТ ---
     const userPrompt = `
-    АУДИТ ЛОКАЦИИ.
-    ТОЧНЫЙ АДРЕС: ${address}
-    КООРДИНАТЫ: ${lat}, ${lon}
+    АУДИТ ЛОКАЦИИ ДЛЯ ОБЩЕПИТА.
+    АДРЕС: ${address} (${lat}, ${lon})
 
-    ДАННЫЕ OSM ВОКРУГ: ${mapDataText}
+    ВВОДНЫЕ ОТ ПОЛЬЗОВАТЕЛЯ:
+    - Тип локации: ${locationType}
+    - Визуальный трафик: ${visualTraffic} чел/5мин
+
+    ${densityWarning ? "!!! ПРЕДУПРЕЖДЕНИЕ СИСТЕМЫ: " + densityWarning + " !!!" : ""}
+
+    ДАННЫЕ OSM (РАДИУС 500м):
+    ${mapDataText}
+
+    ПРАВИЛА ОЦЕНКИ:
+    1. Если нет Якорей (Школы, Офисы, ТЦ) — Score не выше 40.
+    2. Если плотность населения низкая (Population < 100) и нет офисов — Score не выше 30.
+    3. Если рядом (100-200м) есть негативные факторы (свалка, тюрьма) — снижай оценку на 20-30 баллов.
+    4. Если конкурентов много (>5) — это хорошо (есть рынок), но нужен дифференциатор.
 
     ЗАДАЧА:
-    1. Анализируй ИМЕННО ЭТОТ АДРЕС (${address}). Не путай с другими районами.
-    2. Используй Google Search, чтобы проверить, что находится в этом здании или рядом (магазины, офисы, ЖК).
-    3. Составь портрет клиента и оцени конкуренцию.
+    1. Критически оцени локацию.
+    2. Проверь наличие конкурентов.
+    3. Оцени трафик-генераторы.
 
-    ВАЖНО:
-    - Не используй двойные кавычки (") внутри текста JSON.
-    - Если данных мало — пиши честно "Мало данных", не выдумывай несуществующие БЦ.
-
-    ВЕРНИ ТОЛЬКО JSON:
+    ВЕРНИ ТОЛЬКО JSON (без Markdown):
     {
-      "analyzed_address": "Напиши адрес, который ты анализируешь (для проверки)",
+      "analyzed_address": "Адрес",
       "score": 0-100,
-      "verdict": "Текст...",
-      "location_vibe": "Текст...",
+      "verdict": "Краткий вердикт (Почему НЕТ или ДА)",
+      "location_vibe": "Атмосфера",
       "audience": {
-        "who": "Текст...",
-        "needs": "Текст...",
-        "peak_hours": "Текст..."
+        "who": "...",
+        "needs": "...",
+        "peak_hours": "..."
       },
       "analysis": {
-        "traffic_drivers": "Текст...",
-        "barriers": "Текст...",
-        "competition_level": "Текст..."
+        "traffic_drivers": "...",
+        "barriers": "...",
+        "competition_level": "..."
       },
-      "marketing_advice": "Текст..."
+      "marketing_advice": "..."
     }
     `;
 
@@ -755,9 +851,24 @@ map.on('click', (e) => {
 
     const popupContent = document.createElement('div');
     popupContent.innerHTML = `
-        <div style="text-align:center;">
-            <b>Координаты:</b><br>${lat.toFixed(5)}, ${lng.toFixed(5)}<br><br>
-            <button id="btnRunAnalysis" class="primary-btn" style="padding: 5px 10px; font-size: 0.9em;">📊 Анализировать</button>
+        <div class="popup-form">
+            <div style="text-align:center; font-size:0.9em; margin-bottom:5px;">
+                <b>Координаты:</b> ${lat.toFixed(5)}, ${lng.toFixed(5)}
+            </div>
+
+            <div class="popup-label">Тип локации:</div>
+            <select id="locationType" class="popup-select">
+                <option value="Спальный район">Спальный район</option>
+                <option value="Центр города">Центр города</option>
+                <option value="Трасса">Трасса</option>
+                <option value="Промзона">Промзона</option>
+                <option value="Пригород">Пригород</option>
+            </select>
+
+            <div class="popup-label">Трафик (чел/5мин):</div>
+            <input id="trafficLevel" type="number" class="popup-input" placeholder="0" min="0">
+
+            <button id="btnRunAnalysis" class="primary-btn popup-btn">📊 Анализировать</button>
         </div>
     `;
 
@@ -774,7 +885,12 @@ map.on('popupopen', (e) => {
 
         btn.onclick = () => {
              if(latlng) {
-                 runAnalysis(latlng);
+                 const typeEl = document.getElementById('locationType');
+                 const trafficEl = document.getElementById('trafficLevel');
+                 const typeVal = typeEl ? typeEl.value : 'Не указано';
+                 const trafficVal = trafficEl ? trafficEl.value : '0';
+
+                 runAnalysis(latlng, typeVal, trafficVal);
                  map.closePopup();
              }
         };
@@ -795,7 +911,7 @@ async function getAddress(lat, lon) {
     }
 }
 
-async function runAnalysis(latlng) {
+async function runAnalysis(latlng, locationType, visualTraffic) {
     const { lat, lng } = latlng;
 
     // UI Update
@@ -810,11 +926,23 @@ async function runAnalysis(latlng) {
             getAddress(lat, lng)
         ]);
 
-        // 2. Отправляем всё в ИИ (передаем address!)
-        const aiResult = await askGemini(summary, lat, lng, address);
+        // 2. Hard Block Check
+        if (summary && summary.hasRedFlag) {
+            renderHardBlockResult(summary.redFlagReason);
+            return;
+        }
 
-        // 3. Рисуем результат
-        renderAuditResult(aiResult);
+        // 3. Density Warning
+        let densityWarning = "";
+        if (summary && summary.lowDensity) {
+            densityWarning = "ВНИМАНИЕ: Низкая плотность застройки! (Мало жилья/офисов в 300м).";
+        }
+
+        // 4. Отправляем всё в ИИ
+        const aiResult = await askGemini(summary, lat, lng, address, locationType, visualTraffic, densityWarning);
+
+        // 5. Рисуем результат
+        renderAuditResult(aiResult, summary, locationType, visualTraffic);
 
     } catch (error) {
         console.error(error);
@@ -825,7 +953,7 @@ async function runAnalysis(latlng) {
     }
 }
 
-function renderAuditResult(data) {
+function renderAuditResult(data, summary, locationType, visualTraffic) {
     const container = document.getElementById('auditResult');
     container.innerHTML = '';
 
@@ -834,11 +962,28 @@ function renderAuditResult(data) {
     if (data.score >= 75) colorClass = 'score-green';
     if (data.score < 40) colorClass = 'score-red';
 
+    // --- Raw Data HTML ---
+    const rawDataHtml = `
+    <div class="raw-data-container">
+        <div class="raw-data-title">📊 Сырые данные (OSM + Ввод)</div>
+        <div class="raw-data-item"><span>👥 Население (оценка):</span> <b>~${summary.population}</b></div>
+        <div class="raw-data-item"><span>🏠 Жилье (300м):</span> <b>${summary.apartments.count} зд.</b></div>
+        <div class="raw-data-item"><span>🍔 Конкуренты:</span> <b>${summary.competitors.length}</b></div>
+        <div class="raw-data-item"><span>⚓ Якоря:</span> <b>${summary.anchors.length}</b></div>
+        <div class="raw-data-item"><span>🏭 Офисы:</span> <b>${summary.offices}</b></div>
+        <div class="raw-data-item"><span>🚶 Трафик (ввод):</span> <b>${visualTraffic}</b></div>
+        <div class="raw-data-item"><span>📍 Тип (ввод):</span> <b>${locationType}</b></div>
+        ${summary.lowDensity ? '<div class="low-density-warning">⚠️ Низкая плотность застройки</div>' : ''}
+    </div>
+    `;
+
     const html = `
         <div class="audit-score-card ${colorClass}">
             <div style="font-size: 2.5rem; font-weight: bold;">${data.score}/100</div>
             <div style="font-size: 1.1rem; opacity: 0.9;">${data.verdict}</div>
         </div>
+
+        ${rawDataHtml}
 
         <div style="background: #f8fafc; padding: 10px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #3b82f6;">
             <div class="audit-section-title" style="margin-top:0;">📍 Атмосфера (Vibe)</div>
@@ -878,6 +1023,29 @@ function renderAuditResult(data) {
 
     container.innerHTML = html;
     container.classList.remove('hidden');
+
+    const btnReset = document.getElementById('btnResetAudit');
+    if(btnReset) {
+        btnReset.addEventListener('click', () => {
+            container.classList.add('hidden');
+            document.getElementById('auditIntro').classList.remove('hidden');
+        });
+    }
+}
+
+function renderHardBlockResult(reason) {
+    const container = document.getElementById('auditResult');
+    container.innerHTML = `
+        <div class="audit-hard-block">
+            <div class="icon">⛔</div>
+            <div class="title">ЛОКАЦИЯ ОТКЛОНЕНА</div>
+            <div style="font-size: 1.5rem; font-weight: bold; margin-bottom: 10px;">Score: 0/100</div>
+            <div style="font-size:0.95em; color:#a00;">${reason}</div>
+        </div>
+        <button id="btnResetAudit" class="primary-btn" style="margin-top: 15px; background-color: #6c757d;">🔄 Новый поиск</button>
+    `;
+    container.classList.remove('hidden');
+    document.getElementById('auditLoading').classList.add('hidden');
 
     const btnReset = document.getElementById('btnResetAudit');
     if(btnReset) {
