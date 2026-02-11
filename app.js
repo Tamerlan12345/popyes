@@ -355,7 +355,8 @@ function renderEarthquakeList() {
     });
 }
 
-document.getElementById('toggleEarthquakesList').addEventListener('click', () => {
+const toggleBtn = document.getElementById('toggleEarthquakesList');
+const toggleHandler = () => {
     const listEl = document.getElementById('earthquakeList');
     const iconEl = document.getElementById('earthquakeToggleIcon');
     const isVisible = !listEl.classList.contains('collapsed');
@@ -363,9 +364,20 @@ document.getElementById('toggleEarthquakesList').addEventListener('click', () =>
     if (isVisible) {
         listEl.classList.add('collapsed');
         iconEl.classList.remove('rotated');
+        toggleBtn.setAttribute('aria-expanded', 'false');
     } else {
         listEl.classList.remove('collapsed');
         iconEl.classList.add('rotated');
+        toggleBtn.setAttribute('aria-expanded', 'true');
+    }
+};
+
+toggleBtn.addEventListener('click', toggleHandler);
+
+toggleBtn.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggleHandler();
     }
 });
 
