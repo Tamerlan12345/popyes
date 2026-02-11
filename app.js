@@ -472,35 +472,6 @@ async function init() {
 
 // ---- Smart Location Analysis ----
 
-const AlmatyGeoService = {
-  districts: {
-    "Almaly": 18000,
-    "Auezov": 12000,
-    "Bostandyk": 6000,
-    "Jetysu": 5000,
-    "Medeu": 2500,
-    "Turksib": 2500,
-    "Alatau": 2000,
-    "Nauryzbay": 1500
-  },
-  getDistrictFromAddress: function(address) {
-    if (!address) return null;
-    const lower = address.toLowerCase();
-    if (lower.includes('almaly') || lower.includes('алмалинск')) return 'Almaly';
-    if (lower.includes('auezov') || lower.includes('ауэзов')) return 'Auezov';
-    if (lower.includes('bostandyk') || lower.includes('бостандык')) return 'Bostandyk';
-    if (lower.includes('jetysu') || lower.includes('жетысу')) return 'Jetysu';
-    if (lower.includes('medeu') || lower.includes('медеу')) return 'Medeu';
-    if (lower.includes('turksib') || lower.includes('турксиб')) return 'Turksib';
-    if (lower.includes('alatau') || lower.includes('алатау')) return 'Alatau';
-    if (lower.includes('nauryzbay') || lower.includes('наурызбай')) return 'Nauryzbay';
-    return null;
-  },
-  getDensity: function(district) {
-    return this.districts[district] || 3000; // Default fallback
-  }
-};
-
 async function getSurroundingData(lat, lon) {
     // Увеличили таймаут до 45 секунд
     const query = `
@@ -685,8 +656,7 @@ function parseOverpassData(data, centerLat, centerLon) {
     return summary;
 }
 
-// Helper to query Gemini
-async function queryGemini(systemPrompt, userPrompt) {
+async function askGemini(summaryData, lat, lon, address, locationType, visualTraffic, densityWarning) {
     const apiKey = window.GEMINI_API_KEY;
 
     if (!apiKey || apiKey.includes("Env.GEMINI_API_KEY") || apiKey.trim() === "") {
@@ -695,69 +665,6 @@ async function queryGemini(systemPrompt, userPrompt) {
         throw new Error("API Key required");
     }
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-
-    const payload = {
-        system_instruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-        tools: [{ google_search: {} }]
-    };
-
-    try {
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`Gemini API Error: ${response.status} - ${errText}`);
-        }
-
-        const data = await response.json();
-
-        if (!data.candidates || data.candidates.length === 0) throw new Error("No candidates");
-        const candidate = data.candidates[0];
-        if (candidate.finishReason === "SAFETY") throw new Error("Safety Block");
-
-        let textPart = "";
-        if (candidate.content && candidate.content.parts) {
-            textPart = candidate.content.parts.map(p => p.text || "").join(" ");
-        }
-
-        if (!textPart.trim()) throw new Error("Empty AI response");
-
-        console.log("Raw AI Response:", textPart);
-
-        const firstBrace = textPart.indexOf('{');
-        const lastBrace = textPart.lastIndexOf('}');
-
-        if (firstBrace === -1 || lastBrace === -1) {
-             throw new Error("JSON not found in response");
-        }
-
-        let jsonString = textPart.substring(firstBrace, lastBrace + 1);
-
-        try {
-            return JSON.parse(jsonString);
-        } catch (e) {
-            console.warn("JSON Parse Error. Raw:", jsonString);
-            throw new Error("Ошибка чтения ответа от ИИ. Попробуйте еще раз.");
-        }
-
-    } catch (e) {
-        console.error("Analysis failed", e);
-        if (e.message.includes("Overpass")) {
-             alert("Сервер карт не отвечает. Попробуйте позже.");
-        } else {
-             alert("Ошибка анализа: " + e.message);
-        }
-        throw e;
-    }
-}
-
-async function askGemini(summaryData, lat, lon, address, locationType, visualTraffic, densityWarning) {
     const mapDataText = summaryData 
         ? JSON.stringify({
             population_estimate: summaryData.population,
@@ -820,7 +727,66 @@ async function askGemini(summaryData, lat, lon, address, locationType, visualTra
     }
     `;
 
-    return queryGemini(systemPrompt, userPrompt);
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+
+    const payload = {
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+        tools: [{ google_search: {} }]
+    };
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Gemini API Error: ${response.status} - ${errText}`);
+        }
+
+        const data = await response.json();
+        
+        if (!data.candidates || data.candidates.length === 0) throw new Error("No candidates");
+        const candidate = data.candidates[0];
+        if (candidate.finishReason === "SAFETY") throw new Error("Safety Block");
+
+        let textPart = "";
+        if (candidate.content && candidate.content.parts) {
+            textPart = candidate.content.parts.map(p => p.text || "").join(" ");
+        }
+
+        if (!textPart.trim()) throw new Error("Empty AI response");
+
+        console.log("Raw AI Response:", textPart);
+
+        const firstBrace = textPart.indexOf('{');
+        const lastBrace = textPart.lastIndexOf('}');
+
+        if (firstBrace === -1 || lastBrace === -1) {
+             throw new Error("JSON not found in response");
+        }
+
+        let jsonString = textPart.substring(firstBrace, lastBrace + 1);
+        
+        try {
+            return JSON.parse(jsonString);
+        } catch (e) {
+            console.warn("JSON Parse Error. Raw:", jsonString);
+            throw new Error("Ошибка чтения ответа от ИИ. Попробуйте еще раз.");
+        }
+
+    } catch (e) {
+        console.error("Analysis failed", e);
+        if (e.message.includes("Overpass")) {
+             alert("Сервер карт не отвечает. Попробуйте позже.");
+        } else {
+             alert("Ошибка анализа: " + e.message);
+        }
+        throw e;
+    }
 }
 
 // ---- UI Logic & Event Handling ----
@@ -914,11 +880,6 @@ map.on('click', (e) => {
             <div class="popup-label">Трафик (чел/5мин):</div>
             <input id="trafficLevel" type="number" class="popup-input" placeholder="0" min="0">
 
-            <div style="margin-top: 8px; font-size: 0.9em; display: flex; align-items: center;">
-                <input type="checkbox" id="chkProfessionalMode" style="margin-right: 5px;">
-                <label for="chkProfessionalMode">DataHunters PRO <span class="professional-badge">New</span></label>
-            </div>
-
             <button id="btnRunAnalysis" class="primary-btn popup-btn">📊 Анализировать</button>
         </div>
     `;
@@ -938,17 +899,10 @@ map.on('popupopen', (e) => {
              if(latlng) {
                  const typeEl = document.getElementById('locationType');
                  const trafficEl = document.getElementById('trafficLevel');
-                 const chkPro = document.getElementById('chkProfessionalMode');
-
                  const typeVal = typeEl ? typeEl.value : 'Не указано';
                  const trafficVal = trafficEl ? trafficEl.value : '0';
-                 const isPro = chkPro ? chkPro.checked : false;
 
-                 if (isPro) {
-                     runProfessionalAudit(latlng, typeVal, trafficVal);
-                 } else {
-                     runAnalysis(latlng, typeVal, trafficVal);
-                 }
+                 runAnalysis(latlng, typeVal, trafficVal);
                  map.closePopup();
              }
         };
@@ -1011,108 +965,6 @@ async function runAnalysis(latlng, locationType, visualTraffic) {
     }
 }
 
-async function runProfessionalAudit(latlng, locationType, visualTraffic) {
-    const { lat, lng } = latlng;
-
-    // UI Update
-    document.getElementById('auditIntro').classList.add('hidden');
-    document.getElementById('auditResult').classList.add('hidden');
-    document.getElementById('auditLoading').classList.remove('hidden');
-
-    try {
-        const [summary, address] = await Promise.all([
-            getSurroundingData(lat, lng),
-            getAddress(lat, lng)
-        ]);
-
-        if (summary && summary.hasRedFlag) {
-            renderHardBlockResult(summary.redFlagReason);
-            return;
-        }
-
-        const district = AlmatyGeoService.getDistrictFromAddress(address);
-        const density = AlmatyGeoService.getDensity(district);
-        const densityInfo = district
-            ? `Район: ${district}, Плотность: ~${density} чел/км²`
-            : "Район не определен, плотность: средняя";
-
-        // Professional Prompt
-        const systemPrompt = `
-        Ты — Ведущий Геомаркетолог и Инвестиционный Директор (DataHunters).
-        Твоя цель — провести ГЛУБОКИЙ аудит локации для открытия общепита (QSR/Fast Food) в Алматы.
-
-        МЕТОДОЛОГИЯ:
-        1. Catchment Area: Используй радиус 500м как прокси для 5-минутной пешеходной доступности.
-        2. Плотность населения: Используй предоставленные данные по району.
-        3. Каннибализация и Конкуренция: Критически оценивай плотность конкурентов.
-        4. SWOT-анализ: Обязателен.
-
-        ИСПОЛЬЗУЙ Google Search (Search Grounding), чтобы:
-        - Найти точные названия, рейтинг и отзывы 3-х ближайших конкурентов из списка OSM (или найди новые, если OSM пуст).
-        - Проверить наличие крупных офисных центров или точек притяжения рядом.
-
-        ФОРМАТ ОТВЕТА (JSON):
-        {
-            "score": 0-100,
-            "verdict": "Строгий вердикт",
-            "location_vibe": "Описание атмосферы",
-            "metrics_table": {
-               "traffic_forecast": "X - Y чел/день",
-               "competition_level": "Низкий/Средний/Высокий",
-               "roi_forecast": "X - Y мес.",
-               "district_density": "..."
-            },
-            "swot": {
-               "strengths": ["...", "..."],
-               "weaknesses": ["...", "..."],
-               "opportunities": ["...", "..."],
-               "threats": ["...", "..."]
-            },
-            "competitor_analysis": [
-               { "name": "...", "distance": "...", "rating": "...", "status": "..." }
-            ],
-            "marketing_advice": "..."
-        }
-        `;
-
-        const mapDataText = summary
-            ? JSON.stringify({
-                osm_features: summary,
-                calculated_density: density
-              }, null, 2)
-            : "НЕТ ДАННЫХ С КАРТЫ (OSM недоступен).";
-
-        const userPrompt = `
-        ПРОФЕССИОНАЛЬНЫЙ АУДИТ.
-        Адрес: ${address} (${lat}, ${lng})
-        Вводные данные: ${locationType}, Трафик: ${visualTraffic}
-        Гео-данные (DataHunters): ${densityInfo}
-
-        OSM Данные:
-        ${mapDataText}
-
-        ЗАДАЧА:
-        1. Проведи поиск конкурентов в Google.
-        2. Оцени рентабельность.
-        3. Составь SWOT.
-        `;
-
-        const aiResult = await queryGemini(systemPrompt, userPrompt);
-
-        // Add professional flag for renderer
-        aiResult.isProfessional = true;
-
-        renderAuditResult(aiResult, summary, locationType, visualTraffic);
-
-    } catch (error) {
-        console.error(error);
-        alert("Ошибка анализа: " + error.message);
-        document.getElementById('auditIntro').classList.remove('hidden');
-    } finally {
-        document.getElementById('auditLoading').classList.add('hidden');
-    }
-}
-
 function renderAuditResult(data, summary, locationType, visualTraffic) {
     const container = document.getElementById('auditResult');
     container.innerHTML = '';
@@ -1137,61 +989,19 @@ function renderAuditResult(data, summary, locationType, visualTraffic) {
     </div>
     `;
 
-    // --- Professional Content ---
-    let professionalContent = '';
-    if (data.isProfessional) {
-        // Metrics Table
-        if (data.metrics_table) {
-            professionalContent += `
-            <div class="audit-section-title">📈 Ключевые метрики</div>
-            <table class="audit-table">
-                <tr><th>Показатель</th><th>Значение</th></tr>
-                <tr><td>Прогноз трафика</td><td>${data.metrics_table.traffic_forecast}</td></tr>
-                <tr><td>Уровень конкуренции</td><td>${data.metrics_table.competition_level}</td></tr>
-                <tr><td>ROI (Окупаемость)</td><td>${data.metrics_table.roi_forecast}</td></tr>
-                <tr><td>Плотность района</td><td>${data.metrics_table.district_density}</td></tr>
-            </table>`;
-        }
+    const html = `
+        <div class="audit-score-card ${colorClass}">
+            <div style="font-size: 2.5rem; font-weight: bold;">${data.score}/100</div>
+            <div style="font-size: 1.1rem; opacity: 0.9;">${data.verdict}</div>
+        </div>
 
-        // SWOT
-        if (data.swot) {
-            professionalContent += `
-            <div class="audit-section-title">SWOT Анализ</div>
-            <div class="swot-grid">
-                <div class="swot-item swot-strengths">
-                    <h4>💪 Сильные стороны</h4>
-                    <ul>${(data.swot.strengths || []).map(s => `<li>${s}</li>`).join('')}</ul>
-                </div>
-                <div class="swot-item swot-weaknesses">
-                    <h4>📉 Слабые стороны</h4>
-                    <ul>${(data.swot.weaknesses || []).map(s => `<li>${s}</li>`).join('')}</ul>
-                </div>
-                <div class="swot-item swot-opportunities">
-                    <h4>🚀 Возможности</h4>
-                    <ul>${(data.swot.opportunities || []).map(s => `<li>${s}</li>`).join('')}</ul>
-                </div>
-                <div class="swot-item swot-threats">
-                    <h4>⚠️ Угрозы</h4>
-                    <ul>${(data.swot.threats || []).map(s => `<li>${s}</li>`).join('')}</ul>
-                </div>
-            </div>`;
-        }
+        ${rawDataHtml}
 
-        // Competitors
-        if (data.competitor_analysis && data.competitor_analysis.length > 0) {
-             professionalContent += `
-             <div class="audit-section-title">🍔 Топ Конкурентов (Google)</div>
-             <ul style="font-size:0.9em; padding-left:20px;">
-                ${data.competitor_analysis.map(c => `<li><b>${c.name}</b> (${c.distance}): ${c.rating || 'N/A'}⭐ - ${c.status || ''}</li>`).join('')}
-             </ul>`;
-        }
-    }
+        <div style="background: #f8fafc; padding: 10px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #3b82f6;">
+            <div class="audit-section-title" style="margin-top:0;">📍 Атмосфера (Vibe)</div>
+            <div style="font-size: 0.9em; font-style: italic;">"${data.location_vibe}"</div>
+        </div>
 
-    // --- Standard Content (Legacy support or fallback) ---
-    // Even in professional mode, we might want to show Audience/Vibe if AI returned it
-    let standardContent = '';
-    if (data.audience) {
-         standardContent += `
         <div class="audit-section-title">👤 Портрет клиента</div>
         <div class="stat-grid" style="grid-template-columns: 1fr; gap: 8px; text-align: left;">
             <div class="stat-item" style="align-items: flex-start; padding: 10px;">
@@ -1206,35 +1016,14 @@ function renderAuditResult(data, summary, locationType, visualTraffic) {
                 <div class="stat-label">Пик трафика</div>
                 <div>⏰ ${data.audience.peak_hours}</div>
             </div>
-        </div>`;
-    }
+        </div>
 
-    if (data.analysis && !data.isProfessional) { // Only show old list if not professional (pro has SWOT)
-         standardContent += `
         <div class="audit-section-title">📊 Глубокий анализ</div>
         <ul style="font-size: 0.9em; padding-left: 20px; color: #334155;">
             <li style="margin-bottom: 5px;"><b>Магнит трафика:</b> ${data.analysis.traffic_drivers}</li>
             <li style="margin-bottom: 5px;"><b>Барьеры:</b> ${data.analysis.barriers}</li>
             <li style="margin-bottom: 5px;"><b>Конкуренция:</b> ${data.analysis.competition_level}</li>
-        </ul>`;
-    }
-
-    const html = `
-        <div class="audit-score-card ${colorClass}">
-            <div style="font-size: 2.5rem; font-weight: bold;">${data.score}/100</div>
-            <div style="font-size: 1.1rem; opacity: 0.9;">${data.verdict}</div>
-            ${data.isProfessional ? '<div style="font-size:0.8em; margin-top:5px; opacity:0.8;">DataHunters Methodology</div>' : ''}
-        </div>
-
-        ${rawDataHtml}
-
-        <div style="background: #f8fafc; padding: 10px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #3b82f6;">
-            <div class="audit-section-title" style="margin-top:0;">📍 Атмосфера (Vibe)</div>
-            <div style="font-size: 0.9em; font-style: italic;">"${data.location_vibe}"</div>
-        </div>
-
-        ${professionalContent}
-        ${standardContent}
+        </ul>
 
         <div style="margin-top: 15px; padding: 12px; background: #ecfdf5; border-radius: 8px; border: 1px solid #10b981;">
             <div style="color: #047857; font-weight: bold; font-size: 0.9em;">💡 Совет маркетолога:</div>
