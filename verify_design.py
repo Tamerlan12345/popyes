@@ -1,31 +1,41 @@
+from playwright.sync_api import sync_playwright
+import time
 
-import asyncio
-from playwright.async_api import async_playwright, expect
+def verify_smart_location_ui():
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto("http://localhost:8080")
 
-async def main():
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+        # Wait for map to load
+        page.wait_for_selector("#map")
 
-        # First, go to the page to establish a context for localStorage
-        await page.goto("http://localhost:8080")
+        # Click on "Smart Location" tab
+        page.click("#tabAudit")
 
-        # Bypass login by setting auth state directly in localStorage
-        await page.evaluate("""() => {
-            localStorage.setItem('authState', '1');
-            localStorage.setItem('userRole', 'admin');
-        }""")
+        # Click "Start Analysis" button
+        page.click("#btnToggleAudit")
 
-        # Reload the page so the application can recognize the new auth state
-        await page.reload()
+        # Click on the map (center)
+        # map is at #map. get bounding box
+        map_el = page.locator("#map")
+        box = map_el.bounding_box()
+        page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
 
-        # Wait for the map container and the first map tile to be visible
-        await expect(page.locator("#map")).to_be_visible()
-        await expect(page.locator(".leaflet-tile-loaded").first).to_be_visible()
+        # Wait for popup
+        page.wait_for_selector(".popup-form")
 
-        # Take a screenshot for verification
-        await page.screenshot(path="verification.png")
-        await browser.close()
+        # Check for checkbox
+        checkbox = page.locator("#chkProfessionalMode")
+        if checkbox.is_visible():
+            print("Checkbox is visible")
+        else:
+            print("Checkbox NOT visible")
 
-if __name__ == '__main__':
-    asyncio.run(main())
+        # Take screenshot of popup
+        page.screenshot(path="verification.png")
+
+        browser.close()
+
+if __name__ == "__main__":
+    verify_smart_location_ui()
