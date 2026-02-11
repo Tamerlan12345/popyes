@@ -932,6 +932,17 @@ async function runAnalysis(latlng, locationType, visualTraffic) {
     document.getElementById('auditLoading').classList.remove('hidden');
 
     try {
+        // Check for Pro Mode
+        const useProMode = document.getElementById('proModeCheckbox')?.checked;
+        if (useProMode) {
+            if (typeof GeomarketingProService === 'undefined') {
+                throw new Error("Pro Service not loaded");
+            }
+            const proResult = await GeomarketingProService.runAudit(lat, lng);
+            renderProAuditResult(proResult);
+            return;
+        }
+
         // 1. Параллельно получаем данные карты и точный адрес
         const [summary, address] = await Promise.all([
             getSurroundingData(lat, lng),
@@ -1069,3 +1080,52 @@ function renderHardBlockResult(reason) {
 }
 
 init();
+
+function renderProAuditResult(data) {
+    const container = document.getElementById('auditResult');
+    container.innerHTML = '';
+
+    const { financial_forecast, traffic_analysis, verdict, risk_factors, growth_potential } = data;
+    const { rawData } = data;
+
+    const html = `
+        <div class="audit-score-card score-green" style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); color: white; border: 1px solid #334155;">
+            <div style="font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; opacity: 0.8;">DataHunters Pro Audit</div>
+            <div style="font-size: 1.5rem; font-weight: bold; margin-bottom: 5px;">${verdict}</div>
+        </div>
+
+        <div class="raw-data-container" style="background: #f1f5f9; border: 1px solid #e2e8f0;">
+            <div class="raw-data-title" style="color: #334155;">📊 Данные (Kontur + OSM)</div>
+            <div class="raw-data-item"><span>👥 Плотность (Kontur):</span> <b>${rawData.density} чел/га</b></div>
+            <div class="raw-data-item"><span>🏙 Оценка населения (500м):</span> <b>~${rawData.estimatedPopulation}</b></div>
+            <div class="raw-data-item"><span>🍔 Конкуренты:</span> <b>${rawData.competitorCount} (${rawData.competitorDensity}/1000 чел)</b></div>
+            <div class="raw-data-item"><span>🚀 Генераторы (Score):</span> <b>${rawData.generators.totalScore}</b></div>
+        </div>
+
+        <div style="background: #ecfdf5; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #10b981;">
+            <div style="color: #047857; font-weight: bold; font-size: 1.1em; margin-bottom: 10px;">💰 Финансовый Прогноз (месяц)</div>
+            <div style="font-size: 1.4em; font-weight: bold; color: #059669; margin-bottom: 5px;">${financial_forecast.monthly_revenue_kzt} ₸</div>
+            <div style="font-size: 0.9em; color: #065f46;">Дневной оборот: <b>${financial_forecast.daily_revenue_kzt} ₸</b></div>
+            <div style="font-size: 0.9em; color: #065f46;">Окупаемость: <b>${financial_forecast.break_even_months} мес.</b></div>
+        </div>
+
+        <div class="audit-section-title">🚦 Анализ Трафика</div>
+        <ul style="font-size: 0.9em; padding-left: 20px; color: #334155;">
+             <li style="margin-bottom: 5px;"><b>Потенциал роста:</b> ${growth_potential}</li>
+             <li style="margin-bottom: 5px;"><b>Риски:</b> ${risk_factors && risk_factors.length ? risk_factors.join(", ") : "Нет явных рисков"}</li>
+        </ul>
+
+        <button id="btnResetAudit" class="primary-btn" style="margin-top: 15px; background-color: #6c757d;">🔄 Новый поиск</button>
+    `;
+
+    container.innerHTML = html;
+    container.classList.remove('hidden');
+
+    const btnReset = document.getElementById('btnResetAudit');
+    if(btnReset) {
+        btnReset.addEventListener('click', () => {
+            container.classList.add('hidden');
+            document.getElementById('auditIntro').classList.remove('hidden');
+        });
+    }
+}
