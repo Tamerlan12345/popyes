@@ -428,3 +428,24 @@ section#map {
     margin-top: 5px;
     border: 1px solid #ffeeba;
 }
+
+/* Audit Result Container Fixes */
+#auditResult {
+  overflow-y: auto;
+  max-height: 60vh;
+  word-wrap: break-word;
+  padding-right: 10px;
+}
+
+.audit-dashboard > div {
+  margin-bottom: 15px;
+}
+
+.audit-dashboard div,
+.audit-dashboard p,
+.audit-dashboard ul,
+.audit-dashboard li {
+  min-width: 0;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}

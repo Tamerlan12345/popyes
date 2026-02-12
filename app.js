@@ -1463,6 +1463,40 @@ function renderProAuditResult(data) {
             </div>
             ` : ''}
 
+            <!-- Analyst Verdict -->
+            ${(() => {
+                if (!data.executive_summary) return '';
+                let summaryColor = '#334155'; // Default dark gray
+                let summaryBg = '#f1f5f9';
+                let summaryBorder = '#cbd5e1';
+                const summaryText = data.executive_summary.toUpperCase();
+
+                if (summaryText.includes('NO-GO') || summaryText.includes('NO GO') || summaryText.includes('RED')) {
+                     summaryColor = '#991b1b'; // Red
+                     summaryBg = '#fee2e2';
+                     summaryBorder = '#fca5a5';
+                } else if (summaryText.includes('CAUTION') || summaryText.includes('YELLOW')) {
+                     summaryColor = '#854d0e'; // Yellow
+                     summaryBg = '#fef9c3';
+                     summaryBorder = '#fde047';
+                } else if (summaryText.includes('GO')) {
+                     summaryColor = '#166534'; // Green
+                     summaryBg = '#dcfce7';
+                     summaryBorder = '#86efac';
+                }
+
+                return `
+                <div style="margin-top: 20px; border: 2px solid ${summaryBorder}; background: ${summaryBg}; padding: 15px; border-radius: 12px;">
+                    <div style="color: ${summaryColor}; font-weight: 800; font-size: 0.95rem; text-transform: uppercase; margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+                        <span>👨‍💼</span> ВЕРДИКТ ГЕНЕРАЛЬНОГО АНАЛИТИКА
+                    </div>
+                    <div style="color: ${summaryColor}; font-size: 0.95rem; line-height: 1.5; font-weight: 500;">
+                        ${data.executive_summary}
+                    </div>
+                </div>
+                `;
+            })()}
+
             <!-- Data Sources Footer -->
             <div style="margin-top: 20px; font-size: 0.7rem; color: #94a3b8; text-align: center;">
                 Данные: WorldPop API (2020), OpenStreetMap, AI Analysis
