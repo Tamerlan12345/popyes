@@ -510,7 +510,7 @@ async function _fetchMainData(lat, lon) {
         node(around:500, ${lat}, ${lon})["highway"="bus_stop"];
         node(around:500, ${lat}, ${lon})["railway"="subway_entrance"];
 
-        way(around:500, ${lat}, ${lon})["building"~"apartments|residential"];
+        way(around:350, ${lat}, ${lon})["building"~"apartments|residential"];
 
         node(around:500, ${lat}, ${lon})["landuse"~"cemetery|industrial|garages|landfill|brownfield"];
         way(around:500, ${lat}, ${lon})["landuse"~"cemetery|industrial|garages|landfill|brownfield"];
@@ -530,7 +530,8 @@ async function _fetchMainData(lat, lon) {
     // Failover servers (Task 2)
     const servers = [
         'https://overpass-api.de/api/interpreter',
-        'https://overpass.kumi.systems/api/interpreter'
+        'https://overpass.kumi.systems/api/interpreter',
+        'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
     ];
 
     for (const url of servers) {
