@@ -1092,8 +1092,13 @@ async function runAnalysis(latlng, isStrict = false) {
                 throw new Error("Pro Service not loaded");
             }
 
-            // Always use Board Level Audit for Pro/Strict modes now
-            const proResult = await GeomarketingProService.runBoardLevelAudit(lat, lng, isStrict);
+            let proResult;
+            if (isStrict) {
+                proResult = await GeomarketingProService.runStrictAudit(lat, lng);
+            } else {
+                proResult = await GeomarketingProService.runAudit(lat, lng);
+            }
+
             renderProAuditResult(proResult);
             return;
         }
@@ -1246,27 +1251,10 @@ function renderProAuditResult(data) {
         return;
     }
 
+    const { traffic_score_audit, competitor_analysis, strategic_verdict, risk_factors, growth_potential, cannibalization_analysis } = data;
     const { rawData } = data;
 
-    // Detect if this is the new Board format (has "board_discussion")
-    const isBoardFormat = !!data.board_discussion;
-
-    // Fallback for score if using old format
-    const finalScore = isBoardFormat ? data.score : (data.traffic_score_audit ? data.traffic_score_audit.score : 0);
-    const finalVerdict = isBoardFormat ? data.final_decision : (data.strategic_verdict ? data.strategic_verdict.status : 'N/A');
-
-    // Color logic
-    let scoreColor = 'score-yellow';
-    if (finalScore >= 86) scoreColor = 'score-green'; // Gold actually
-    else if (finalScore >= 71) scoreColor = 'score-green';
-    else if (finalScore < 41) scoreColor = 'score-red';
-
-    const bgStyle = finalScore >= 86
-        ? 'background: linear-gradient(135deg, #FFD700 0%, #B8860B 100%); color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.3);' // Gold
-        : 'background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); color: white;';
-
-    // Competitors Table
-    const competitor_analysis = data.competitor_analysis || {};
+    // Competitors Table/List
     let competitorsHtml = '<div style="font-style:italic; color:#64748b;">Нет данных о конкурентах</div>';
     if (competitor_analysis && competitor_analysis.list && competitor_analysis.list.length > 0) {
         competitorsHtml = '<div class="competitors-list" style="display:flex; flex-direction:column; gap:8px;">';
@@ -1285,38 +1273,11 @@ function renderProAuditResult(data) {
         competitorsHtml += '</div>';
     }
 
-    // Board Discussion Section
-    let boardSection = '';
-    if (isBoardFormat) {
-        boardSection = `
-        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 15px; overflow: hidden;">
-            <div style="background: #e2e8f0; padding: 8px 12px; font-weight: bold; color: #475569; font-size: 0.9em;">🏛 Совет Директоров (The Debate)</div>
-            <div style="padding: 12px; font-size: 0.95em; color: #334155; font-style: italic; border-bottom: 1px solid #e2e8f0;">
-                "${data.board_discussion}"
-            </div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1px; background: #e2e8f0;">
-                <div style="background: white; padding: 10px; font-size: 0.85em;">
-                    <div style="font-weight: bold; color: #2563eb; margin-bottom: 4px;">CEO (Strat)</div>
-                    <div>${data.ceo_verdict}</div>
-                </div>
-                <div style="background: white; padding: 10px; font-size: 0.85em;">
-                    <div style="font-weight: bold; color: #dc2626; margin-bottom: 4px;">CFO (Risk)</div>
-                    <div>${data.cfo_verdict}</div>
-                </div>
-                <div style="background: white; padding: 10px; font-size: 0.85em;">
-                    <div style="font-weight: bold; color: #16a34a; margin-bottom: 4px;">OPS (Logos)</div>
-                    <div>${data.ops_verdict}</div>
-                </div>
-            </div>
-        </div>
-        `;
-    }
-
     const html = `
-        <div class="audit-score-card ${scoreColor}" style="${bgStyle} border: 1px solid #334155;">
-            <div style="font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; opacity: 0.8;">Board Level Audit</div>
-            <div style="font-size: 2.5rem; font-weight: bold;">${finalScore}/100</div>
-            <div style="font-size: 1rem; opacity: 0.9; margin-top:5px;">${finalVerdict}</div>
+        <div class="audit-score-card score-green" style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); color: white; border: 1px solid #334155;">
+            <div style="font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; opacity: 0.8;">DataHunters Pro Audit</div>
+            <div style="font-size: 2.5rem; font-weight: bold;">${traffic_score_audit.score}/100</div>
+            <div style="font-size: 1rem; opacity: 0.9; margin-top:5px;">${traffic_score_audit.comment}</div>
         </div>
 
         <div class="raw-data-container" style="background: #f1f5f9; border: 1px solid #e2e8f0;">
@@ -1327,7 +1288,18 @@ function renderProAuditResult(data) {
             <div class="raw-data-item"><span>🚀 Генераторы (Score):</span> <b>${rawData.generators.totalScore}</b></div>
         </div>
 
-        ${boardSection}
+        <div style="background: #fff7ed; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #f97316;">
+            <div style="color: #c2410c; font-weight: bold; font-size: 1.1em; margin-bottom: 10px;">🛡 Стратегический Вердикт</div>
+            <div style="font-size: 1.1em; font-weight: bold; color: #ea580c; margin-bottom: 5px;">${strategic_verdict.status}</div>
+            <div style="font-size: 0.95em; color: #9a3412; line-height:1.5;">${strategic_verdict.recommendation}</div>
+        </div>
+
+        ${cannibalization_analysis ? `
+        <div style="background: #eff6ff; padding: 10px; border-radius: 6px; margin-bottom: 15px; border-left: 3px solid #3b82f6;">
+            <div style="color: #1e3a8a; font-weight: bold; font-size: 0.9em;">🍗 Стратегия Popeyes (Cannibalization):</div>
+            <div style="font-weight: bold; color: #1d4ed8;">${cannibalization_analysis.status}</div>
+            <div style="font-size: 0.85em; color: #1e40af;">${cannibalization_analysis.strategy}</div>
+        </div>` : ''}
 
         <div class="audit-section-title">⚔️ Анализ Конкурентов</div>
         <div style="margin-bottom:10px; font-size:0.9em; color:#334155;">${competitor_analysis.summary || ''}</div>
@@ -1337,8 +1309,8 @@ function renderProAuditResult(data) {
 
         <div class="audit-section-title" style="margin-top:15px;">🚦 Факторы Риска и Роста</div>
         <ul style="font-size: 0.9em; padding-left: 20px; color: #334155;">
-             <li style="margin-bottom: 5px;"><b>Потенциал роста:</b> ${data.growth_potential}</li>
-             <li style="margin-bottom: 5px;"><b>Риски:</b> ${data.risk_factors && data.risk_factors.length ? data.risk_factors.join(", ") : "Нет явных рисков"}</li>
+             <li style="margin-bottom: 5px;"><b>Потенциал роста:</b> ${growth_potential}</li>
+             <li style="margin-bottom: 5px;"><b>Риски:</b> ${risk_factors && risk_factors.length ? risk_factors.join(", ") : "Нет явных рисков"}</li>
         </ul>
 
         <button id="btnResetAudit" class="primary-btn" style="margin-top: 15px; background-color: #6c757d;">🔄 Новый поиск</button>
