@@ -63,24 +63,6 @@ class GeomarketingProService {
         };
     }
 
-    static async runBoardLevelAudit(lat, lng, isStrict) {
-        console.log("Starting Board Level Audit for:", lat, lng, "Strict:", isStrict);
-
-        // 1. Gather Data (Tier 1, 2, 3)
-        const data = await this.gatherData(lat, lng);
-
-        // 2. Generate Prompt (Board Mode)
-        const systemPrompt = this.generateBoardPrompt(data, isStrict);
-
-        // 3. Ask AI
-        const aiResult = await this.askGeminiPro(systemPrompt, data);
-
-        return {
-            ...aiResult,
-            rawData: data
-        };
-    }
-
     static async runStrictAudit(lat, lng) {
         console.log("Starting STRICT Audit for:", lat, lng);
 
@@ -109,27 +91,7 @@ class GeomarketingProService {
             throw new Error("Standard analysis function 'getSurroundingData' not found.");
         }
 
-        let osmData = await getSurroundingData(lat, lng);
-
-        // Fallback if OSM data is unavailable
-        if (!osmData) {
-             console.warn("OSM Data unavailable. Using mock/empty structure.");
-             osmData = {
-                 competitors: [],
-                 universities: 0,
-                 schools: 0,
-                 malls: 0,
-                 offices: 0,
-                 transport: { subway: 0, bus_stops: 0 },
-                 apartments: { count: 0 },
-                 anchors: [],
-                 pointFeatures: [],
-                 barriers: [],
-                 physicalConstraints: [],
-                 negatives: [],
-                 existingPopeyesPoints: []
-             };
-        }
+        const osmData = await getSurroundingData(lat, lng);
 
         // Calculate Weighted Generators
         const generators = this.calculateTrafficWeights(osmData);
@@ -140,7 +102,7 @@ class GeomarketingProService {
         const areaInHectares = Math.PI * 0.5 * 0.5 * 100; // 500m radius = 0.25 sq km = 25 hectares? Wait. 1 sq km = 100 ha. 0.25 * 3.14 = 0.785 sq km = 78.5 ha.
         const estimatedPopulation = density * 78.5;
 
-        const competitorCount = osmData.competitors ? osmData.competitors.length : 0;
+        const competitorCount = osmData.competitors.length;
         const competitorDensity = estimatedPopulation > 0
             ? (competitorCount / (estimatedPopulation / 1000)).toFixed(2)
             : 0;
@@ -154,7 +116,7 @@ class GeomarketingProService {
             generators,
             competitorCount,
             competitorDensity,
-            competitorTypes: osmData.competitors ? osmData.competitors.join(", ") : ""
+            competitorTypes: osmData.competitors.join(", ")
         };
     }
 
@@ -327,69 +289,6 @@ class GeomarketingProService {
       "status": "...",
       "strategy": "..."
   }
-}
-`;
-    }
-
-    static generateBoardPrompt(data, isStrict = false) {
-        const pointFeatures = data.osmData.pointFeatures || [];
-        const barriers = data.osmData.barriers || [];
-        const physical = data.osmData.physicalConstraints || [];
-        const negatives = data.osmData.negatives || [];
-
-        const pointInfo = pointFeatures.length > 0 ? pointFeatures.join(", ") : "Чисто (нет явных преград в точке)";
-        const barrierInfo = barriers.length > 0 ? barriers.join(", ") : "Нет барьеров в радиусе 300м";
-
-        let cfoTone = isStrict
-            ? "Ты — ПАРАНОИДАЛЬНЫЙ CFO. Твоя задача — найти любую причину убить сделку. Ты видишь риски там, где их нет. Твой девиз: 'Нет парковки = банкротство'."
-            : "Ты — Строгий CFO (Риск-менеджер). Ты оценишь ROI и риски. Не считай в долларах, считай в категориях 'Dead Money' или 'Cash Cow'.";
-
-        return `
-Ты — СОВЕТ ДИРЕКТОРОВ (Board of Directors) сети QSR (Fast Food).
-Твоя задача — провести мульти-ролевой аудит локации {${data.lat}, ${data.lng}} и вынести вердикт.
-
-РОЛИ:
-1. CEO (Стратег): Оценивает потенциал захвата рынка, демографию, "Vibe" локации. Решает, соответствует ли локация бренду.
-2. CFO (Финансы/Риски): ${cfoTone} Строго проверяет барьеры (если клиенты не могут перейти дорогу — это Dead Money).
-3. OPS (Операционист): Смотрит на логистику, пиковые часы (школа=обед, спальник=ужин) и каннибализацию.
-
-ВХОДНЫЕ ДАННЫЕ:
-- Плотность (Kontur): ${data.density} чел/га.
-- Генераторы (Score ${data.generators.totalScore}): ${data.generators.description}.
-- Конкуренты: ${data.competitorTypes}.
-- Жилье: ${data.osmData.apartments.count} домов. Офисы: ${data.osmData.offices}.
-- БАРЬЕРЫ (300м): ${barrierInfo}.
-- ТОЧЕЧНЫЙ АНАЛИЗ (0-15м): ${pointInfo}.
-- Ограничения: ${physical.join(", ") || "Нет"}.
-- Негатив: ${negatives.join(", ") || "Нет"}.
-
-ПРАВИЛА СКОРИНГА (0-100):
-- 0-40 (Red Zone): Критические факторы (кладбище, промзона, вода, трасса, нет доступа).
-- 41-70 (Yellow Zone): Есть трафик, но высокая конкуренция или неудобный вход. Требуется маркетинг.
-- 71-85 (Green Zone): Хорошая локация, стандартные риски.
-- 86-100 (Gold Zone): "Единорог". Высокая плотность + якоря + мало конкурентов.
-
-КРИТИЧЕСКИЕ БАРЬЕРЫ:
-Если в "БАРЬЕРАХ" есть река, Ж/Д или трасса, отрезающая трафик — Score НЕ МОЖЕТ быть выше 50.
-Если в "ТОЧЕЧНОМ АНАЛИЗЕ" вода, болото или трасса — Score = 0.
-
-ВЕРНИ JSON (строго валидный):
-{
-  "board_discussion": "Краткая стенограмма спора директоров (CEO vs CFO vs OPS). Максимум 3-4 предложения.",
-  "ceo_verdict": "Мнение CEO...",
-  "cfo_verdict": "Мнение CFO (Money Pit / Calculated Risk / Cash Cow)...",
-  "ops_verdict": "Мнение OPS...",
-  "final_decision": "Финальное решение (APPROVED / REJECT / CONDITIONAL)...",
-  "score": 0-100,
-  "zone": "Red/Yellow/Green/Gold",
-  "traffic_score_audit": { "score": 0-100, "comment": "..." },
-  "competitor_analysis": {
-      "list": [{"name": "Name", "dist": "100m", "type": "cafe", "risk": "High"}],
-      "summary": "..."
-  },
-  "strategic_verdict": { "status": "...", "recommendation": "..." },
-  "growth_potential": "...",
-  "risk_factors": ["..."]
 }
 `;
     }
