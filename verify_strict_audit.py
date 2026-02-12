@@ -25,7 +25,7 @@ def get_point_data(lat, lon):
       out tags;
     """
 
-    url = 'https://overpass-api.de/api/interpreter'
+    url = 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
     try:
         data = query.encode('utf-8')
         req = urllib.request.Request(url, data=data, method='POST', headers={'User-Agent': 'VerificationScript/1.0'})

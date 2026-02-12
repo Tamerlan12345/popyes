@@ -6,8 +6,8 @@ const LIBS = {
 // ---- Config ----
 const OVERPASS_SERVERS = [
     'https://maps.mail.ru/osm/tools/overpass/api/interpreter', // Быстрый в СНГ
-    'https://overpass-api.de/api/interpreter', // Стандартный
-    'https://overpass.kumi.systems/api/interpreter' // Резерв
+    'https://overpass.kumi.systems/api/interpreter', // Резерв
+    'https://overpass-api.de/api/interpreter' // Стандартный
 ];
 const OVERPASS_TIMEOUT_MS = 100000; // 100 seconds
 const OVERPASS_QL_TIMEOUT = 90; // 90 seconds in query
@@ -481,7 +481,7 @@ async function init() {
 
 // ---- Smart Location Analysis ----
 
-async function fetchCommercial(lat, lon) {
+async function fetchCommercialData(lat, lon) {
     const query = `
       [out:json][timeout:${OVERPASS_QL_TIMEOUT}];
       (
@@ -522,16 +522,16 @@ async function fetchInfrastructure(lat, lon) {
     return _executeOverpassQuery(query, "Infrastructure");
 }
 
-async function fetchResidential(lat, lon) {
-    // Optimised radius: 350m
+async function fetchHousing(lat, lon) {
+    // Optimised radius: 300m
     const query = `
       [out:json][timeout:${OVERPASS_QL_TIMEOUT}];
       (
-        way(around:350, ${lat}, ${lon})["building"~"apartments|residential"];
+        way(around:300, ${lat}, ${lon})["building"~"apartments|residential"];
       );
       out center;
     `;
-    return _executeOverpassQuery(query, "Residential");
+    return _executeOverpassQuery(query, "Housing");
 }
 
 async function _executeOverpassQuery(query, label) {
@@ -597,9 +597,9 @@ async function getSurroundingData(lat, lon) {
 async function _fetchMainData(lat, lon) {
     console.log("Fetching map data in 3 chunks...");
     const results = await Promise.allSettled([
-        fetchCommercial(lat, lon),
+        fetchCommercialData(lat, lon),
         fetchInfrastructure(lat, lon),
-        fetchResidential(lat, lon)
+        fetchHousing(lat, lon)
     ]);
 
     let combinedElements = [];
@@ -615,8 +615,36 @@ async function _fetchMainData(lat, lon) {
     });
 
     if (failedCount === 3) {
-        console.error("All map data chunks failed.");
-        return null;
+        console.error("All map data chunks failed. Using fallback.");
+        return {
+            isPartial: true,
+            osm_data_missing: true,
+            population: 0,
+            apartments: { count: 0, total_levels: 0 },
+            schools: 0,
+            universities: 0,
+            malls: 0,
+            offices: 0,
+            transport: { bus_stops: 0, subway: 0 },
+            competitors: [],
+            anchors: [],
+            negatives: [],
+            existingPopeyesPoints: [],
+            physicalConstraints: [],
+            pointFeatures: [],
+            barriers: [],
+            hasRedFlag: false,
+            redFlagReason: null,
+            lowDensity: false,
+            vibrancy: {
+                atms: 0,
+                banks: 0,
+                crossings: 0,
+                footways: 0,
+                retail_count_50m: 0,
+                transport_100m: 0
+            }
+        };
     }
 
     // Combine into a mock Overpass response structure
@@ -860,25 +888,17 @@ async function _fetchPointData(lat, lon) {
       out tags;
     `;
 
-    const url = 'https://overpass-api.de/api/interpreter';
-    try {
-        const response = await fetch(url, { method: 'POST', body: query });
-        if (!response.ok) return [];
-        const data = await response.json();
-        const features = [];
-        if (data.elements) {
-            data.elements.forEach(el => {
-                const tags = el.tags || {};
-                const type = tags.natural || tags.landuse || tags.highway || tags.leisure;
-                const name = tags.name || type;
-                if (type) features.push(`${name} (${type})`);
-            });
-        }
-        return features;
-    } catch (e) {
-        console.warn("Point data fetch failed", e);
-        return [];
+    const data = await _executeOverpassQuery(query, "PointData");
+    const features = [];
+    if (data && data.elements) {
+        data.elements.forEach(el => {
+            const tags = el.tags || {};
+            const type = tags.natural || tags.landuse || tags.highway || tags.leisure;
+            const name = tags.name || type;
+            if (type) features.push(`${name} (${type})`);
+        });
     }
+    return features;
 }
 
 async function _fetchBarrierData(lat, lon) {
@@ -892,13 +912,12 @@ async function _fetchBarrierData(lat, lon) {
       out geom;
     `;
 
-    const url = 'https://overpass-api.de/api/interpreter';
-    try {
-        const response = await fetch(url, { method: 'POST', body: query });
-        if (!response.ok) return [];
-        const data = await response.json();
-        const barriers = [];
+    const data = await _executeOverpassQuery(query, "BarrierData");
+    const barriers = [];
 
+    if (!data) return barriers;
+
+    try {
         await ensureLibraryLoaded('turf', LIBS.turf);
         const t = window.turf || turf;
 
@@ -919,11 +938,10 @@ async function _fetchBarrierData(lat, lon) {
                 }
             });
         }
-        return barriers;
     } catch (e) {
-        console.warn("Barrier data fetch failed", e);
-        return [];
+        console.warn("Turf processing failed", e);
     }
+    return barriers;
 }
 
 async function askGemini(summaryData, lat, lon, address, locationType, visualTraffic, densityWarning) {
@@ -1345,7 +1363,7 @@ function renderProAuditResult(data) {
     // Warning HTML
     const warningHtml = data.map_data_warning
         ? `<div style="background: #fff7ed; color: #c2410c; padding: 10px; border-radius: 8px; border: 1px solid #fdba74; margin-bottom: 15px; text-align: center; font-size: 0.9em;">
-            ⚠️ Картографические данные частично недоступны, анализ выполнен на основе спутниковой демографии
+            ⚠️ Детальная карта недоступна. Анализ выполнен на основе спутниковых данных (WorldPop).
            </div>`
         : '';
 
@@ -1401,6 +1419,47 @@ function renderProAuditResult(data) {
                 <ul style="margin: 0; padding-left: 20px; color: #881337; font-size: 0.9rem;">
                     ${risks.map(r => `<li style="margin-bottom: 5px;">${r}</li>`).join('')}
                 </ul>
+            </div>
+            ` : ''}
+
+            <!-- C-Level Debate -->
+            ${data.c_level_debate ? `
+            <div style="margin-top: 20px;">
+                 <div style="font-size: 0.85rem; text-transform: uppercase; color: #64748b; font-weight: 700; margin-bottom: 10px;">👔 Совет Директоров (C-Level Debate)</div>
+                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                     <div style="background: #f1f5f9; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1;">
+                         <div style="font-weight: 700; color: #334155; margin-bottom: 5px;">COO (Операционный)</div>
+                         <div style="font-size: 0.85rem; color: #475569; font-style: italic;">"${data.c_level_debate.COO_opinion}"</div>
+                     </div>
+                     <div style="background: #f1f5f9; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1;">
+                         <div style="font-weight: 700; color: #334155; margin-bottom: 5px;">CFO (Финансовый)</div>
+                         <div style="font-size: 0.85rem; color: #475569; font-style: italic;">"${data.c_level_debate.CFO_opinion}"</div>
+                     </div>
+                 </div>
+            </div>
+            ` : ''}
+
+            <!-- Marketing 5P -->
+            ${data.marketing_5p ? `
+            <div style="margin-top: 20px;">
+                 <div style="font-size: 0.85rem; text-transform: uppercase; color: #64748b; font-weight: 700; margin-bottom: 10px;">📈 Маркетинг 5P</div>
+                 <div style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
+                     ${Object.entries(data.marketing_5p).map(([key, val], idx) => {
+                         let label = key.replace('_', ' ').toUpperCase();
+                         if(key === 'place_audit') label = 'PLACE (Место)';
+                         if(key === 'people_audit') label = 'PEOPLE (Люди)';
+                         if(key === 'product_fit') label = 'PRODUCT (Продукт)';
+                         if(key === 'price_potential') label = 'PRICE (Цена)';
+                         if(key === 'promotion_strategy') label = 'PROMOTION (Промо)';
+
+                         const bg = idx % 2 === 0 ? '#f8fafc' : 'white';
+                         return `
+                         <div style="padding: 10px; background: ${bg}; border-bottom: 1px solid #e2e8f0; display: flex; flex-direction: column;">
+                             <div style="font-size: 0.75rem; font-weight: 700; color: #94a3b8; margin-bottom: 2px;">${label}</div>
+                             <div style="font-size: 0.9rem; color: #334155;">${val}</div>
+                         </div>`;
+                     }).join('')}
+                 </div>
             </div>
             ` : ''}
 
