@@ -1217,14 +1217,27 @@ function renderProAuditResult(data) {
     if (competitor_analysis && competitor_analysis.list && competitor_analysis.list.length > 0) {
         competitorsHtml = '<div class="competitors-list" style="display:flex; flex-direction:column; gap:8px;">';
         competitor_analysis.list.forEach(comp => {
-             const riskColor = comp.risk === 'High' ? '#ef4444' : (comp.risk === 'Medium' ? '#f59e0b' : '#10b981');
+             const name = comp.name || comp.competitor_name || comp.title || 'Неизвестно';
+             const type = comp.type || comp.category || 'Н/Д';
+             const risk = comp.risk || comp.risk_level || 'Н/Д';
+
+             let dist = comp.dist || comp.distance || 'Н/Д';
+             // Если дистанция число, добавляем метры
+             if (typeof dist === 'number') {
+                 dist = `${dist} м`;
+             } else if (typeof dist === 'string' && !dist.match(/(м|km|m)/)) {
+                 // Если строка без единиц измерения (например "120"), считаем что это метры
+                 dist = `${dist} м`;
+             }
+
+             const riskColor = risk === 'High' ? '#ef4444' : (risk === 'Medium' ? '#f59e0b' : '#10b981');
              competitorsHtml += `
                 <div style="display:flex; justify-content:space-between; align-items:center; background:white; padding:8px; border-radius:4px; border:1px solid #e2e8f0;">
                     <div>
-                        <div style="font-weight:600; font-size:0.9em;">${comp.name}</div>
-                        <div style="font-size:0.8em; color:#64748b;">${comp.type || 'N/A'} • ${comp.dist}</div>
+                        <div style="font-weight:600; font-size:0.9em;">${name}</div>
+                        <div style="font-size:0.8em; color:#64748b;">${type} • ${dist}</div>
                     </div>
-                    <div style="font-size:0.8em; font-weight:bold; color:${riskColor};">${comp.risk} Risk</div>
+                    <div style="font-size:0.8em; font-weight:bold; color:${riskColor};">${risk} Risk</div>
                 </div>
              `;
         });
@@ -1244,6 +1257,15 @@ function renderProAuditResult(data) {
             <div class="raw-data-item"><span>🏙 Оценка населения (500м):</span> <b>~${rawData.estimatedPopulation}</b></div>
             <div class="raw-data-item"><span>🍔 Конкуренты:</span> <b>${rawData.competitorCount} (${rawData.competitorDensity}/1000 чел)</b></div>
             <div class="raw-data-item"><span>🚀 Генераторы (Score):</span> <b>${rawData.generators.totalScore}</b></div>
+
+            <div style="margin-top:10px; border-top:1px solid #cbd5e1; padding-top:5px;">
+                <div style="font-size:0.75em; color:#64748b; margin-bottom:2px;">
+                    Данные: <a href="https://www.kontur.io/" target="_blank" style="color:#64748b; text-decoration:underline;">Kontur Population (Global Human Settlement Layer)</a>
+                </div>
+                <div style="font-size:0.75em; color:#64748b;">
+                    Данные: <a href="https://www.openstreetmap.org/" target="_blank" style="color:#64748b; text-decoration:underline;">OpenStreetMap (Overpass API)</a>
+                </div>
+            </div>
         </div>
 
         <div style="background: #fff7ed; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #f97316;">
