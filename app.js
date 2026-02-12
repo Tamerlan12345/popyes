@@ -3,6 +3,15 @@ const LIBS = {
   turf: 'https://unpkg.com/@turf/turf@6.5.0/turf.min.js'
 };
 
+// ---- Config ----
+const OVERPASS_SERVERS = [
+    'https://maps.mail.ru/osm/tools/overpass/api/interpreter', // Быстрый в СНГ
+    'https://overpass-api.de/api/interpreter', // Стандартный
+    'https://overpass.kumi.systems/api/interpreter' // Резерв
+];
+const OVERPASS_TIMEOUT_MS = 100000; // 100 seconds
+const OVERPASS_QL_TIMEOUT = 90; // 90 seconds in query
+
 async function ensureLibraryLoaded(windowVar, url) {
   if (window[windowVar]) return;
   // If loading is already in progress, wait for it
@@ -472,6 +481,105 @@ async function init() {
 
 // ---- Smart Location Analysis ----
 
+async function fetchCommercial(lat, lon) {
+    const query = `
+      [out:json][timeout:${OVERPASS_QL_TIMEOUT}];
+      (
+        node(around:500, ${lat}, ${lon})["amenity"~"fast_food|cafe|restaurant|pub|bar|food_court|biergarten"];
+        way(around:500, ${lat}, ${lon})["amenity"~"fast_food|cafe|restaurant|pub|bar|food_court|biergarten"];
+        node(around:500, ${lat}, ${lon})["shop"~"mall|supermarket|marketplace"];
+        way(around:500, ${lat}, ${lon})["shop"~"mall|supermarket|marketplace"];
+        node(around:500, ${lat}, ${lon})["office"];
+        way(around:500, ${lat}, ${lon})["office"];
+        node(around:100, ${lat}, ${lon})["amenity"~"atm|bank"];
+      );
+      out center;
+    `;
+    return _executeOverpassQuery(query, "Commercial");
+}
+
+async function fetchInfrastructure(lat, lon) {
+    const query = `
+      [out:json][timeout:${OVERPASS_QL_TIMEOUT}];
+      (
+        node(around:500, ${lat}, ${lon})["amenity"~"school|university|college|kindergarten"];
+        way(around:500, ${lat}, ${lon})["amenity"~"school|university|college|kindergarten"];
+        node(around:100, ${lat}, ${lon})["highway"="crossing"];
+        way(around:100, ${lat}, ${lon})["highway"="footway"];
+        node(around:500, ${lat}, ${lon})["highway"="bus_stop"];
+        node(around:500, ${lat}, ${lon})["railway"="subway_entrance"];
+        node(around:500, ${lat}, ${lon})["landuse"~"cemetery|industrial|garages|landfill|brownfield"];
+        way(around:500, ${lat}, ${lon})["landuse"~"cemetery|industrial|garages|landfill|brownfield"];
+        node(around:500, ${lat}, ${lon})["amenity"~"prison|grave_yard|waste_disposal|mortuary"];
+        way(around:500, ${lat}, ${lon})["amenity"~"prison|grave_yard|waste_disposal|mortuary"];
+        node(around:100, ${lat}, ${lon})["natural"~"water|beach|wetland"];
+        way(around:100, ${lat}, ${lon})["natural"~"water|beach|wetland"];
+        node(around:100, ${lat}, ${lon})["landuse"~"forest"];
+        way(around:100, ${lat}, ${lon})["landuse"~"forest"];
+      );
+      out center;
+    `;
+    return _executeOverpassQuery(query, "Infrastructure");
+}
+
+async function fetchResidential(lat, lon) {
+    // Optimised radius: 350m
+    const query = `
+      [out:json][timeout:${OVERPASS_QL_TIMEOUT}];
+      (
+        way(around:350, ${lat}, ${lon})["building"~"apartments|residential"];
+      );
+      out center;
+    `;
+    return _executeOverpassQuery(query, "Residential");
+}
+
+async function _executeOverpassQuery(query, label) {
+    for (const url of OVERPASS_SERVERS) {
+        try {
+            // console.log(`Fetching ${label} from: ${url}`);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), OVERPASS_TIMEOUT_MS);
+
+            const response = await fetch(url, {
+                method: 'POST',
+                body: query,
+                signal: controller.signal
+            });
+
+            clearTimeout(timeoutId);
+
+            if (response.status === 429 || response.status === 504) {
+                console.warn(`${label}: Overpass API ${url} returned status ${response.status}. Retrying...`);
+                continue;
+            }
+
+            if (!response.ok) {
+                console.warn(`${label}: Overpass API ${url} returned status ${response.status}. Skipping.`);
+                continue;
+            }
+
+            const text = await response.text();
+            if (text.trim().startsWith('<')) {
+                 console.warn(`${label}: Overpass API ${url} returned HTML error.`);
+                 continue;
+            }
+
+            try {
+                return JSON.parse(text);
+            } catch (jsonError) {
+                console.warn(`${label}: Failed to parse JSON from ${url}:`, jsonError);
+                continue;
+            }
+
+        } catch (e) {
+            console.error(`${label}: Connection failed for ${url}:`, e);
+        }
+    }
+    // Return null if all failed
+    return null;
+}
+
 async function getSurroundingData(lat, lon) {
     const [mainSummary, pointFeatures, barriers] = await Promise.all([
         _fetchMainData(lat, lon),
@@ -487,106 +595,40 @@ async function getSurroundingData(lat, lon) {
 }
 
 async function _fetchMainData(lat, lon) {
-    // Увеличили таймаут до 90 секунд (Task 2)
-    const query = `
-      [out:json][timeout:90];
-      (
-        node(around:500, ${lat}, ${lon})["amenity"~"fast_food|cafe|restaurant|pub|bar|food_court|biergarten"];
-        way(around:500, ${lat}, ${lon})["amenity"~"fast_food|cafe|restaurant|pub|bar|food_court|biergarten"];
+    console.log("Fetching map data in 3 chunks...");
+    const results = await Promise.allSettled([
+        fetchCommercial(lat, lon),
+        fetchInfrastructure(lat, lon),
+        fetchResidential(lat, lon)
+    ]);
 
-        node(around:500, ${lat}, ${lon})["amenity"~"school|university|college|kindergarten"];
-        way(around:500, ${lat}, ${lon})["amenity"~"school|university|college|kindergarten"];
+    let combinedElements = [];
+    let failedCount = 0;
 
-        node(around:500, ${lat}, ${lon})["shop"~"mall|supermarket|marketplace"];
-        way(around:500, ${lat}, ${lon})["shop"~"mall|supermarket|marketplace"];
-
-        node(around:500, ${lat}, ${lon})["office"];
-        way(around:500, ${lat}, ${lon})["office"];
-
-        node(around:100, ${lat}, ${lon})["amenity"~"atm|bank"];
-        node(around:100, ${lat}, ${lon})["highway"="crossing"];
-        way(around:100, ${lat}, ${lon})["highway"="footway"];
-
-        node(around:500, ${lat}, ${lon})["highway"="bus_stop"];
-        node(around:500, ${lat}, ${lon})["railway"="subway_entrance"];
-
-        way(around:350, ${lat}, ${lon})["building"~"apartments|residential"];
-
-        node(around:500, ${lat}, ${lon})["landuse"~"cemetery|industrial|garages|landfill|brownfield"];
-        way(around:500, ${lat}, ${lon})["landuse"~"cemetery|industrial|garages|landfill|brownfield"];
-
-        node(around:500, ${lat}, ${lon})["amenity"~"prison|grave_yard|waste_disposal|mortuary"];
-        way(around:500, ${lat}, ${lon})["amenity"~"prison|grave_yard|waste_disposal|mortuary"];
-
-        node(around:100, ${lat}, ${lon})["natural"~"water|beach|wetland"];
-        way(around:100, ${lat}, ${lon})["natural"~"water|beach|wetland"];
-
-        node(around:100, ${lat}, ${lon})["landuse"~"forest"];
-        way(around:100, ${lat}, ${lon})["landuse"~"forest"];
-      );
-      out center;
-    `;
-
-    // Failover servers (Task 2)
-    const servers = [
-        'https://overpass-api.de/api/interpreter',
-        'https://overpass.kumi.systems/api/interpreter',
-        'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
-    ];
-
-    for (const url of servers) {
-        try {
-            console.log(`Trying Overpass server: ${url}`);
-
-            // Set JS signal timeout to 100s (Task 2)
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 100000);
-
-            const response = await fetch(url, {
-                method: 'POST',
-                body: query,
-                signal: controller.signal
-                // Убрали headers, чтобы избежать лишних проблем с CORS/OPTIONS
-            });
-
-            clearTimeout(timeoutId);
-
-            if (response.status === 429 || response.status === 504) {
-                console.warn(`Overpass API ${url} returned status ${response.status}. Retrying next server...`);
-                continue; // Try next server
-            }
-
-            if (!response.ok) {
-                console.warn(`Overpass API ${url} returned status ${response.status}. Skipping map data.`);
-                continue; // Try next server just in case
-            }
-
-            const text = await response.text();
-
-            // Проверяем, не вернул ли сервер HTML (ошибку) вместо JSON
-            if (text.trim().startsWith('<')) {
-                 console.warn(`Overpass API ${url} returned HTML error. Retrying next...`);
-                 continue;
-            }
-
-            try {
-                const data = JSON.parse(text);
-                return parseOverpassData(data, lat, lon);
-            } catch (jsonError) {
-                console.warn(`Failed to parse Overpass JSON from ${url}:`, jsonError);
-                continue; // Try next server
-            }
-
-        } catch (e) {
-            console.error(`Overpass API connection failed for ${url}:`, e);
-            // Try next server
+    results.forEach((res, index) => {
+        if (res.status === 'fulfilled' && res.value && res.value.elements) {
+            combinedElements = combinedElements.concat(res.value.elements);
+        } else {
+            failedCount++;
+            console.warn(`Chunk ${index} failed or returned no data.`);
         }
+    });
+
+    if (failedCount === 3) {
+        console.error("All map data chunks failed.");
+        return null;
     }
 
-    // If all servers failed
-    console.error("All Overpass servers failed.");
-    // Не выбрасываем ошибку (throw e), а возвращаем null, чтобы Gemini мог работать через поиск
-    return null;
+    // Combine into a mock Overpass response structure
+    const combinedData = { elements: combinedElements };
+    const summary = parseOverpassData(combinedData, lat, lon);
+
+    if (failedCount > 0) {
+        summary.isPartial = true;
+        console.warn("Map data is partial.");
+    }
+
+    return summary;
 }
 
 function parseOverpassData(data, centerLat, centerLon) {
@@ -1300,9 +1342,17 @@ function renderProAuditResult(data) {
     // WorldPop
     const popSource = metrics.is_projected ? '(Расчет)' : '(WorldPop)';
 
+    // Warning HTML
+    const warningHtml = data.map_data_warning
+        ? `<div style="background: #fff7ed; color: #c2410c; padding: 10px; border-radius: 8px; border: 1px solid #fdba74; margin-bottom: 15px; text-align: center; font-size: 0.9em;">
+            ⚠️ Картографические данные частично недоступны, анализ выполнен на основе спутниковой демографии
+           </div>`
+        : '';
+
     const html = `
         <div class="audit-dashboard" style="font-family: 'Inter', sans-serif;">
             <!-- Header -->
+            ${warningHtml}
             <div style="background: ${bgColor}; color: ${textColor}; padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 20px; border: 1px solid rgba(0,0,0,0.05);">
                 <div style="font-size: 3rem; font-weight: 800; line-height: 1;">${data.score}</div>
                 <div style="font-size: 0.9rem; text-transform: uppercase; font-weight: 600; opacity: 0.8; margin-top:5px;">Score</div>

@@ -140,9 +140,10 @@ class GeomarketingProService {
             throw new Error("Standard analysis function 'getSurroundingData' not found.");
         }
         let osmData = await getSurroundingData(lat, lng);
+        let mapDataWarning = false;
 
         if (!osmData) {
-            console.warn("OSM Data fetch failed. Using empty fallback.");
+            console.warn("OSM Data fetch failed completely. Using empty fallback.");
             osmData = {
                 population: 0,
                 apartments: { count: 0 },
@@ -153,6 +154,10 @@ class GeomarketingProService {
                 hasRedFlag: false,
                 redFlagReason: null
             };
+            mapDataWarning = true;
+        } else if (osmData.isPartial) {
+             console.warn("OSM Data is partial.");
+             mapDataWarning = true;
         }
 
         // 2. Hard Reject Check (Taboo Zones)
@@ -193,7 +198,8 @@ class GeomarketingProService {
             score: geoScore,
             osmData: osmData,
             competitors_list: osmData.competitors.join(", "),
-            anchors_list: osmData.anchors.join(", ")
+            anchors_list: osmData.anchors.join(", "),
+            map_data_warning: mapDataWarning
         };
 
         // --- AI PROMPT & EXECUTION ---
@@ -203,16 +209,8 @@ class GeomarketingProService {
         // Merge Results
         return {
             ...aiResult, // AI Verdict, Proof Points, Risks
-            score: geoScore, // Override AI score with Math score? Or keep math score as base?
-                             // The prompt asks AI to output 'score', but requirement says:
-                             // "Перед отправкой в ИИ, скрипт должен посчитать базовый балл, чтобы ИИ опирался на математику."
-                             // The AI JSON output has 'score'.
-                             // Let's use the Math Score for the UI as primary, or let AI adjust it?
-                             // Requirement 4 UI: "Score (Green > 70...)"
-                             // Usually we trust the Math Score more for consistency.
-                             // But AI might find nuances.
-                             // Let's assume the AI *confirms* the score or we just use `geoScore`.
-                             // For now, I will return `geoScore` in the top level object to ensure UI uses it.
+            score: geoScore,
+            map_data_warning: mapDataWarning,
             metrics: {
                 real_population_500m: popData.population,
                 is_projected: popData.is_projected,
@@ -440,8 +438,13 @@ class GeomarketingProService {
         const combinedConstraints = [...physical, ...negatives];
         const constraintsStr = combinedConstraints.length > 0 ? combinedConstraints.join(", ") : "Нет явных ограничений";
 
+        const warningMsg = data.map_data_warning
+            ? "\n!!! WARNING: Detailed map data unavailable. Rely on WorldPop density. !!!\n"
+            : "";
+
         return `
 ТЫ — ОПЫТНЫЙ ДЕВЕЛОПЕР МЕЖДУНАРОДНОЙ СЕТИ POPEYES.
+${warningMsg}
 Твоя задача: Объективно оценить локацию на основе ФАКТОВ.
 Ты должен не просто критиковать, а искать ПОТЕНЦИАЛ. Твоя цель — подтвердить, можно ли здесь заработать деньги.
 
