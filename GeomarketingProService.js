@@ -133,7 +133,7 @@ class GeomarketingProService {
         }
 
         return {
-            totalScore: score,
+            totalScore: Math.min(score, 100),
             description: details.join(", ") || "Нет значимых генераторов"
         };
     }
@@ -141,15 +141,15 @@ class GeomarketingProService {
     static generateProPrompt(data) {
         return `
 Ты — Инвестиционный Аналитик и Эксперт по Геомаркетингу (DataHunters Methodology).
-Твоя задача: Оценить рентабельность открытия точки общепита/ритейла в координатах {${data.lat}, ${data.lng}}.
+Твоя задача: Оценить качественный потенциал локации для общепита/ритейла в координатах {${data.lat}, ${data.lng}}.
 
 ВХОДНЫЕ ДАННЫЕ:
 
 Плотность населения (Kontur): ${data.density} чел/га.
 Оценка населения в радиусе 500м: ~${data.estimatedPopulation} чел.
 
-Конкуренты в радиусе 500м: ${data.competitorCount} (Плотность: ${data.competitorDensity} на 1000 жителей).
-Типы конкурентов: ${data.competitorTypes}.
+Конкуренты (Raw List): ${data.competitorTypes}.
+(Это список в формате "Название (Тип) - Расстояние").
 
 Генераторы трафика (Score: ${data.generators.totalScore}): ${data.generators.description}.
 
@@ -160,31 +160,34 @@ class GeomarketingProService {
 
 ЗАДАЧА:
 
-1. Расчет выручки (Fermi Estimate): Рассчитай прогнозный дневной оборот.
-   Формула: (Трафик * {conversion_rate}%) * {average_check} KZT.
-   Используй стандарты Алматы: Конверсия стрит-ритейла 1-3%, Средний чек кофейни/фастфуда 1500-2500 тг.
-   Оцени трафик исходя из плотности и генераторов.
+1. Анализ трафика и скоринг: Скорректируй базовый Score (${data.generators.totalScore}) с учетом реальной ситуации (например, если генераторы есть, но они далеко или за рекой — снижай балл). Максимум 100.
+2. Анализ конкурентов: Разбери предоставленный список конкурентов. Верни его в структурированном виде (JSON). Оцени риск каннибализации.
+3. Стратегический вердикт: Дай развернутую рекомендацию (2-3 предложения). Не просто "Рискованно", а ПОЧЕМУ и ЧТО ДЕЛАТЬ (например, "Нужен агрессивный маркетинг" или "Идеально для формата Coffee-to-go").
 
-2. Анализ локации: Оцени 'каннибализацию' трафика конкурентами.
-
-3. Вердикт: (Открывать / Рискованно / Не открывать).
-
-ВАЖНО: Будь критичен. Если плотность ниже 40 чел/га — пиши 'Низкий потенциал'. Не галлюцинируй цифры, если данных мало, дай диапазон.
+ВАЖНО:
+- НЕ делай финансовых прогнозов (выручка, окупаемость). Это запрещено.
+- Будь критичен. Если плотность ниже 40 чел/га — пиши 'Низкий потенциал'.
 
 ВЕРНИ ТОЛЬКО JSON:
 {
-  "financial_forecast": {
-    "daily_revenue_kzt": "150 000 - 250 000",
-    "monthly_revenue_kzt": "4.5M - 7.5M",
-    "break_even_months": "12-18"
+  "traffic_score_audit": {
+    "score": 85,
+    "comment": "Высокий трафик благодаря ВУЗу рядом, но..."
   },
-  "traffic_analysis": {
-    "estimated_daily_traffic": 0,
-    "conversion_rate_percent": 0
+  "competitor_analysis": {
+    "list": [
+      {"name": "Doner King", "dist": "120m", "type": "fast_food", "risk": "High"},
+      {"name": "Coffee Boom", "dist": "300m", "type": "cafe", "risk": "Medium"}
+    ],
+    "cannibalization_risk": "High/Medium/Low",
+    "summary": "Насыщенный рынок..."
   },
-  "verdict": "...",
-  "risk_factors": ["..."],
-  "growth_potential": "..."
+  "strategic_verdict": {
+    "status": "High Potential / Risky / No Go",
+    "recommendation": "Локация подходит для..."
+  },
+  "risk_factors": ["Отсутствие парковки", "..."],
+  "growth_potential": "Рост трафика после..."
 }
 `;
     }
