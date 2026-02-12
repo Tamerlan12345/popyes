@@ -1085,13 +1085,33 @@ function renderProAuditResult(data) {
     const container = document.getElementById('auditResult');
     container.innerHTML = '';
 
-    const { financial_forecast, traffic_analysis, verdict, risk_factors, growth_potential } = data;
+    const { traffic_score_audit, competitor_analysis, strategic_verdict, risk_factors, growth_potential } = data;
     const { rawData } = data;
+
+    // Competitors Table/List
+    let competitorsHtml = '<div style="font-style:italic; color:#64748b;">Нет данных о конкурентах</div>';
+    if (competitor_analysis && competitor_analysis.list && competitor_analysis.list.length > 0) {
+        competitorsHtml = '<div class="competitors-list" style="display:flex; flex-direction:column; gap:8px;">';
+        competitor_analysis.list.forEach(comp => {
+             const riskColor = comp.risk === 'High' ? '#ef4444' : (comp.risk === 'Medium' ? '#f59e0b' : '#10b981');
+             competitorsHtml += `
+                <div style="display:flex; justify-content:space-between; align-items:center; background:white; padding:8px; border-radius:4px; border:1px solid #e2e8f0;">
+                    <div>
+                        <div style="font-weight:600; font-size:0.9em;">${comp.name}</div>
+                        <div style="font-size:0.8em; color:#64748b;">${comp.type || 'N/A'} • ${comp.dist}</div>
+                    </div>
+                    <div style="font-size:0.8em; font-weight:bold; color:${riskColor};">${comp.risk} Risk</div>
+                </div>
+             `;
+        });
+        competitorsHtml += '</div>';
+    }
 
     const html = `
         <div class="audit-score-card score-green" style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); color: white; border: 1px solid #334155;">
             <div style="font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; opacity: 0.8;">DataHunters Pro Audit</div>
-            <div style="font-size: 1.5rem; font-weight: bold; margin-bottom: 5px;">${verdict}</div>
+            <div style="font-size: 2.5rem; font-weight: bold;">${traffic_score_audit.score}/100</div>
+            <div style="font-size: 1rem; opacity: 0.9; margin-top:5px;">${traffic_score_audit.comment}</div>
         </div>
 
         <div class="raw-data-container" style="background: #f1f5f9; border: 1px solid #e2e8f0;">
@@ -1102,14 +1122,19 @@ function renderProAuditResult(data) {
             <div class="raw-data-item"><span>🚀 Генераторы (Score):</span> <b>${rawData.generators.totalScore}</b></div>
         </div>
 
-        <div style="background: #ecfdf5; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #10b981;">
-            <div style="color: #047857; font-weight: bold; font-size: 1.1em; margin-bottom: 10px;">💰 Финансовый Прогноз (месяц)</div>
-            <div style="font-size: 1.4em; font-weight: bold; color: #059669; margin-bottom: 5px;">${financial_forecast.monthly_revenue_kzt} ₸</div>
-            <div style="font-size: 0.9em; color: #065f46;">Дневной оборот: <b>${financial_forecast.daily_revenue_kzt} ₸</b></div>
-            <div style="font-size: 0.9em; color: #065f46;">Окупаемость: <b>${financial_forecast.break_even_months} мес.</b></div>
+        <div style="background: #fff7ed; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #f97316;">
+            <div style="color: #c2410c; font-weight: bold; font-size: 1.1em; margin-bottom: 10px;">🛡 Стратегический Вердикт</div>
+            <div style="font-size: 1.1em; font-weight: bold; color: #ea580c; margin-bottom: 5px;">${strategic_verdict.status}</div>
+            <div style="font-size: 0.95em; color: #9a3412; line-height:1.5;">${strategic_verdict.recommendation}</div>
         </div>
 
-        <div class="audit-section-title">🚦 Анализ Трафика</div>
+        <div class="audit-section-title">⚔️ Анализ Конкурентов</div>
+        <div style="margin-bottom:10px; font-size:0.9em; color:#334155;">${competitor_analysis.summary || ''}</div>
+        <div style="background:#f8fafc; padding:10px; border-radius:8px; max-height:200px; overflow-y:auto;">
+            ${competitorsHtml}
+        </div>
+
+        <div class="audit-section-title" style="margin-top:15px;">🚦 Факторы Риска и Роста</div>
         <ul style="font-size: 0.9em; padding-left: 20px; color: #334155;">
              <li style="margin-bottom: 5px;"><b>Потенциал роста:</b> ${growth_potential}</li>
              <li style="margin-bottom: 5px;"><b>Риски:</b> ${risk_factors && risk_factors.length ? risk_factors.join(", ") : "Нет явных рисков"}</li>
