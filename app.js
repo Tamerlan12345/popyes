@@ -503,6 +503,10 @@ async function _fetchMainData(lat, lon) {
         node(around:500, ${lat}, ${lon})["office"];
         way(around:500, ${lat}, ${lon})["office"];
 
+        node(around:100, ${lat}, ${lon})["amenity"~"atm|bank"];
+        node(around:100, ${lat}, ${lon})["highway"="crossing"];
+        way(around:100, ${lat}, ${lon})["highway"="footway"];
+
         node(around:500, ${lat}, ${lon})["highway"="bus_stop"];
         node(around:500, ${lat}, ${lon})["railway"="subway_entrance"];
 
@@ -578,7 +582,15 @@ function parseOverpassData(data, centerLat, centerLon) {
         barriers: [],            // Barriers in 300m
         hasRedFlag: false,
         redFlagReason: null,
-        lowDensity: false
+        lowDensity: false,
+        vibrancy: {
+            atms: 0,
+            banks: 0,
+            crossings: 0,
+            footways: 0,
+            retail_count_50m: 0,
+            transport_100m: 0
+        }
     };
 
     if (!data.elements) return summary;
@@ -622,6 +634,34 @@ function parseOverpassData(data, centerLat, centerLon) {
             if (name && name.toLowerCase().includes('popeyes')) {
                 summary.existingPopeyesPoints.push(`${name} (${Math.round(dist)}m)`);
             }
+
+            // Vibrancy: Retail/Food within 50m
+            if (dist <= 50) {
+                summary.vibrancy.retail_count_50m++;
+            }
+        }
+
+        // Vibrancy: Shops
+        if (tags.shop) {
+             if (dist <= 50) {
+                 summary.vibrancy.retail_count_50m++;
+             }
+        }
+
+        // Vibrancy: Financial
+        if (tags.amenity === 'atm' || tags.amenity === 'bank') {
+            if (dist <= 100) {
+                 if (tags.amenity === 'atm') summary.vibrancy.atms++;
+                 if (tags.amenity === 'bank') summary.vibrancy.banks++;
+            }
+        }
+
+        // Vibrancy: Walking
+        if (tags.highway === 'crossing') {
+             if (dist <= 100) summary.vibrancy.crossings++;
+        }
+        if (tags.highway === 'footway') {
+             if (dist <= 100) summary.vibrancy.footways++;
         }
 
         // Anchors
@@ -646,10 +686,12 @@ function parseOverpassData(data, centerLat, centerLon) {
         if (tags.highway === 'bus_stop') {
             summary.transport.bus_stops++;
             isAnchor = true;
+            if (dist <= 100) summary.vibrancy.transport_100m++;
         }
         if (tags.railway === 'subway_entrance') {
             summary.transport.subway++;
             isAnchor = true;
+            if (dist <= 100) summary.vibrancy.transport_100m++;
         }
 
         if (isAnchor) {
@@ -1203,97 +1245,97 @@ function renderProAuditResult(data) {
     const container = document.getElementById('auditResult');
     container.innerHTML = '';
 
-    // 1. Sanity Check / Terrain Block
-    if (data.terrain_check === "Fail") {
-        renderHardBlockResult(`Локация непригодна (Sanity Check): ${data.strategic_verdict ? data.strategic_verdict.recommendation : 'Находится в запретной зоне (вода, лес, трасса)'}`);
+    // 1. Sanity Check / Terrain Block (Level 1)
+    // The service might return a special object for Hard Reject
+    if (data.isHardReject) {
+        renderHardBlockResult(data.rejectReason);
         return;
     }
 
-    const { traffic_score_audit, competitor_analysis, strategic_verdict, risk_factors, growth_potential, cannibalization_analysis } = data;
-    const { rawData } = data;
+    // Determine Color Class
+    let colorClass = 'score-yellow';
+    let bgColor = '#fef08a'; // Yellow 200
+    let textColor = '#854d0e'; // Yellow 800
 
-    // Competitors Table/List
-    let competitorsHtml = '<div style="font-style:italic; color:#64748b;">Нет данных о конкурентах</div>';
-    if (competitor_analysis && competitor_analysis.list && competitor_analysis.list.length > 0) {
-        competitorsHtml = '<div class="competitors-list" style="display:flex; flex-direction:column; gap:8px;">';
-        competitor_analysis.list.forEach(comp => {
-             const name = comp.name || comp.competitor_name || comp.title || 'Неизвестно';
-             const type = comp.type || comp.category || 'Н/Д';
-             const risk = comp.risk || comp.risk_level || 'Н/Д';
-
-             let dist = comp.dist || comp.distance || 'Н/Д';
-             // Если дистанция число, добавляем метры
-             if (typeof dist === 'number') {
-                 dist = `${dist} м`;
-             } else if (typeof dist === 'string' && !dist.match(/(м|km|m)/)) {
-                 // Если строка без единиц измерения (например "120"), считаем что это метры
-                 dist = `${dist} м`;
-             }
-
-             const riskColor = risk === 'High' ? '#ef4444' : (risk === 'Medium' ? '#f59e0b' : '#10b981');
-             competitorsHtml += `
-                <div style="display:flex; justify-content:space-between; align-items:center; background:white; padding:8px; border-radius:4px; border:1px solid #e2e8f0;">
-                    <div>
-                        <div style="font-weight:600; font-size:0.9em;">${name}</div>
-                        <div style="font-size:0.8em; color:#64748b;">${type} • ${dist}</div>
-                    </div>
-                    <div style="font-size:0.8em; font-weight:bold; color:${riskColor};">${risk} Risk</div>
-                </div>
-             `;
-        });
-        competitorsHtml += '</div>';
+    if (data.score >= 70) {
+        colorClass = 'score-green';
+        bgColor = '#bbf7d0'; // Green 200
+        textColor = '#166534'; // Green 800
+    } else if (data.score < 40) {
+        colorClass = 'score-red';
+        bgColor = '#fecaca'; // Red 200
+        textColor = '#991b1b'; // Red 800
     }
 
+    const metrics = data.metrics || {};
+    const proofPoints = data.proof_points || [];
+    const risks = data.risk_factors || [];
+
+    // --- Metrics HTML ---
+    // WorldPop
+    const popSource = metrics.is_projected ? '(Расчет)' : '(WorldPop)';
+
     const html = `
-        <div class="audit-score-card score-green" style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); color: white; border: 1px solid #334155;">
-            <div style="font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; opacity: 0.8;">DataHunters Pro Audit</div>
-            <div style="font-size: 2.5rem; font-weight: bold;">${traffic_score_audit.score}/100</div>
-            <div style="font-size: 1rem; opacity: 0.9; margin-top:5px;">${traffic_score_audit.comment}</div>
-        </div>
+        <div class="audit-dashboard" style="font-family: 'Inter', sans-serif;">
+            <!-- Header -->
+            <div style="background: ${bgColor}; color: ${textColor}; padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 20px; border: 1px solid rgba(0,0,0,0.05);">
+                <div style="font-size: 3rem; font-weight: 800; line-height: 1;">${data.score}</div>
+                <div style="font-size: 0.9rem; text-transform: uppercase; font-weight: 600; opacity: 0.8; margin-top:5px;">Score</div>
+                <div style="font-size: 1.2rem; font-weight: 700; margin-top: 10px; line-height: 1.3;">${data.verdict_title}</div>
+            </div>
 
-        <div class="raw-data-container" style="background: #f1f5f9; border: 1px solid #e2e8f0;">
-            <div class="raw-data-title" style="color: #334155;">📊 Данные (Kontur + OSM)</div>
-            <div class="raw-data-item"><span>👥 Плотность (Kontur):</span> <b>${rawData.density} чел/га</b></div>
-            <div class="raw-data-item"><span>🏙 Оценка населения (500м):</span> <b>~${rawData.estimatedPopulation}</b></div>
-            <div class="raw-data-item"><span>🍔 Конкуренты:</span> <b>${rawData.competitorCount} (${rawData.competitorDensity}/1000 чел)</b></div>
-            <div class="raw-data-item"><span>🚀 Генераторы (Score):</span> <b>${rawData.generators.totalScore}</b></div>
-
-            <div style="margin-top:10px; border-top:1px solid #cbd5e1; padding-top:5px;">
-                <div style="font-size:0.75em; color:#64748b; margin-bottom:2px;">
-                    Данные: <a href="https://www.kontur.io/" target="_blank" style="color:#64748b; text-decoration:underline;">Kontur Population (Global Human Settlement Layer)</a>
+            <!-- Metrics Grid -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 20px;">
+                <div style="background: #f8fafc; padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #e2e8f0;">
+                    <div style="font-size: 1.2rem; font-weight: 700; color: #334155;">${metrics.real_population_500m}</div>
+                    <div style="font-size: 0.75rem; color: #64748b;">Жители 500м<br>${popSource}</div>
                 </div>
-                <div style="font-size:0.75em; color:#64748b;">
-                    Данные: <a href="https://www.openstreetmap.org/" target="_blank" style="color:#64748b; text-decoration:underline;">OpenStreetMap (Overpass API)</a>
+                <div style="background: #f8fafc; padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #e2e8f0;">
+                    <div style="font-size: 1.2rem; font-weight: 700; color: #334155;">${metrics.vibrancy_score}/10</div>
+                    <div style="font-size: 0.75rem; color: #64748b;">Vibrancy<br>Score</div>
+                </div>
+                <div style="background: #f8fafc; padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #e2e8f0;">
+                    <div style="font-size: 1.2rem; font-weight: 700; color: #334155;">${metrics.competitors_count}</div>
+                    <div style="font-size: 0.75rem; color: #64748b;">Конкуренты<br>(Рынок)</div>
                 </div>
             </div>
+
+            <!-- Proof Points (Why YES) -->
+            <div style="margin-bottom: 20px;">
+                <div style="font-size: 0.85rem; text-transform: uppercase; color: #64748b; font-weight: 700; margin-bottom: 10px;">🏆 Доказательная база (Why YES?)</div>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    ${proofPoints.map(point => `
+                        <div style="display: flex; align-items: start; gap: 10px; background: white; padding: 10px; border-radius: 8px; border: 1px solid #e2e8f0; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+                            <div style="color: #22c55e;">✅</div>
+                            <div style="font-size: 0.95rem; color: #334155; font-weight: 500;">${point}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+
+            <!-- Recommendation -->
+            <div style="background: #eff6ff; padding: 15px; border-radius: 12px; border-left: 4px solid #3b82f6; margin-bottom: 20px;">
+                <div style="color: #1e40af; font-weight: 700; font-size: 0.9rem; margin-bottom: 5px;">💡 РЕКОМЕНДАЦИЯ</div>
+                <div style="color: #1e3a8a; font-size: 0.95rem; line-height: 1.5;">${data.recommendation}</div>
+            </div>
+
+            <!-- Risks (Attention) -->
+            ${risks.length > 0 ? `
+            <div style="background: #fff1f2; padding: 15px; border-radius: 12px; border: 1px solid #fda4af;">
+                <div style="color: #9f1239; font-weight: 700; font-size: 0.9rem; margin-bottom: 10px;">⚠️ ВНИМАНИЕ (РИСКИ)</div>
+                <ul style="margin: 0; padding-left: 20px; color: #881337; font-size: 0.9rem;">
+                    ${risks.map(r => `<li style="margin-bottom: 5px;">${r}</li>`).join('')}
+                </ul>
+            </div>
+            ` : ''}
+
+            <!-- Data Sources Footer -->
+            <div style="margin-top: 20px; font-size: 0.7rem; color: #94a3b8; text-align: center;">
+                Данные: WorldPop API (2020), OpenStreetMap, AI Analysis
+            </div>
+
+            <button id="btnResetAudit" class="primary-btn" style="margin-top: 20px; width: 100%; background-color: #475569;">🔄 Новый поиск</button>
         </div>
-
-        <div style="background: #fff7ed; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #f97316;">
-            <div style="color: #c2410c; font-weight: bold; font-size: 1.1em; margin-bottom: 10px;">🛡 Стратегический Вердикт</div>
-            <div style="font-size: 1.1em; font-weight: bold; color: #ea580c; margin-bottom: 5px;">${strategic_verdict.status}</div>
-            <div style="font-size: 0.95em; color: #9a3412; line-height:1.5;">${strategic_verdict.recommendation}</div>
-        </div>
-
-        ${cannibalization_analysis ? `
-        <div style="background: #eff6ff; padding: 10px; border-radius: 6px; margin-bottom: 15px; border-left: 3px solid #3b82f6;">
-            <div style="color: #1e3a8a; font-weight: bold; font-size: 0.9em;">🍗 Стратегия Popeyes (Cannibalization):</div>
-            <div style="font-weight: bold; color: #1d4ed8;">${cannibalization_analysis.status}</div>
-            <div style="font-size: 0.85em; color: #1e40af;">${cannibalization_analysis.strategy}</div>
-        </div>` : ''}
-
-        <div class="audit-section-title">⚔️ Анализ Конкурентов</div>
-        <div style="margin-bottom:10px; font-size:0.9em; color:#334155;">${competitor_analysis.summary || ''}</div>
-        <div style="background:#f8fafc; padding:10px; border-radius:8px; max-height:200px; overflow-y:auto;">
-            ${competitorsHtml}
-        </div>
-
-        <div class="audit-section-title" style="margin-top:15px;">🚦 Факторы Риска и Роста</div>
-        <ul style="font-size: 0.9em; padding-left: 20px; color: #334155;">
-             <li style="margin-bottom: 5px;"><b>Потенциал роста:</b> ${growth_potential}</li>
-             <li style="margin-bottom: 5px;"><b>Риски:</b> ${risk_factors && risk_factors.length ? risk_factors.join(", ") : "Нет явных рисков"}</li>
-        </ul>
-
-        <button id="btnResetAudit" class="primary-btn" style="margin-top: 15px; background-color: #6c757d;">🔄 Новый поиск</button>
     `;
 
     container.innerHTML = html;
