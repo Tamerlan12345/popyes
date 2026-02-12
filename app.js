@@ -473,6 +473,20 @@ async function init() {
 // ---- Smart Location Analysis ----
 
 async function getSurroundingData(lat, lon) {
+    const [mainSummary, pointFeatures, barriers] = await Promise.all([
+        _fetchMainData(lat, lon),
+        _fetchPointData(lat, lon),
+        _fetchBarrierData(lat, lon)
+    ]);
+
+    if (!mainSummary) return null;
+
+    mainSummary.pointFeatures = pointFeatures;
+    mainSummary.barriers = barriers;
+    return mainSummary;
+}
+
+async function _fetchMainData(lat, lon) {
     // Увеличили таймаут до 45 секунд
     const query = `
       [out:json][timeout:45];
@@ -559,7 +573,9 @@ function parseOverpassData(data, centerLat, centerLon) {
         anchors: [],
         negatives: [],
         existingPopeyesPoints: [],
-        physicalConstraints: [],
+        physicalConstraints: [], // General constraints in 100m
+        pointFeatures: [],       // Specific features at 0-10m
+        barriers: [],            // Barriers in 300m
         hasRedFlag: false,
         redFlagReason: null,
         lowDensity: false
@@ -670,6 +686,40 @@ function parseOverpassData(data, centerLat, centerLon) {
                  summary.redFlagReason = `Локация непригодна: ${name} (вода/лес) в ${Math.round(dist)}м`;
              }
         }
+
+        // --- Point Specific Check (0-10m) ---
+        if (dist <= 15) { // Slightly generous 15m to catch point features
+            const pointNatural = ['water', 'beach', 'wetland', 'wood', 'scrub', 'heath', 'grassland'];
+            const pointLanduse = ['cemetery', 'industrial', 'forest', 'meadow', 'military', 'railway', 'quarry'];
+            const pointLeisure = ['park', 'garden', 'playground', 'pitch', 'nature_reserve'];
+            const pointHighway = ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'motorway_link', 'trunk_link'];
+
+            if (pointNatural.includes(tags.natural) ||
+                pointLanduse.includes(tags.landuse) ||
+                pointLeisure.includes(tags.leisure) ||
+                pointHighway.includes(tags.highway)) {
+
+                const type = tags.natural || tags.landuse || tags.leisure || tags.highway;
+                const name = tags.name || type;
+                summary.pointFeatures.push(`${name} (${type})`);
+            }
+        }
+
+        // --- Barrier Check (300m) ---
+        if (dist <= 300) {
+            const barrierWater = ['river', 'canal', 'stream', 'drain', 'ditch'];
+            const barrierRail = ['rail', 'tram', 'light_rail', 'subway'];
+            const barrierWall = ['wall', 'fence', 'gate', 'hedge'];
+
+            if (barrierWater.includes(tags.waterway) ||
+                barrierRail.includes(tags.railway) ||
+                barrierWall.includes(tags.barrier)) {
+
+                const type = tags.waterway || tags.railway || tags.barrier;
+                const name = tags.name || type;
+                summary.barriers.push(`${name} (${type}) - ${Math.round(dist)}m`);
+            }
+        }
     });
 
     // --- 3. Density Check ---
@@ -678,6 +728,93 @@ function parseOverpassData(data, centerLat, centerLon) {
     }
 
     return summary;
+}
+
+async function _fetchPointData(lat, lon) {
+    const query = `
+      [out:json][timeout:25];
+      (
+        node(around:15, ${lat}, ${lon})["natural"~"water|beach|wetland|wood|scrub|heath|grassland"];
+        way(around:15, ${lat}, ${lon})["natural"~"water|beach|wetland|wood|scrub|heath|grassland"];
+        relation(around:15, ${lat}, ${lon})["natural"~"water|beach|wetland|wood|scrub|heath|grassland"];
+
+        node(around:15, ${lat}, ${lon})["landuse"~"cemetery|industrial|forest|meadow|military|railway|quarry|reservoir|basin"];
+        way(around:15, ${lat}, ${lon})["landuse"~"cemetery|industrial|forest|meadow|military|railway|quarry|reservoir|basin"];
+        relation(around:15, ${lat}, ${lon})["landuse"~"cemetery|industrial|forest|meadow|military|railway|quarry|reservoir|basin"];
+
+        way(around:15, ${lat}, ${lon})["highway"~"motorway|trunk|primary|secondary|tertiary|motorway_link|trunk_link"];
+
+        node(around:15, ${lat}, ${lon})["leisure"~"park|garden|playground|pitch|nature_reserve"];
+        way(around:15, ${lat}, ${lon})["leisure"~"park|garden|playground|pitch|nature_reserve"];
+        relation(around:15, ${lat}, ${lon})["leisure"~"park|garden|playground|pitch|nature_reserve"];
+      );
+      out tags;
+    `;
+
+    const url = 'https://overpass-api.de/api/interpreter';
+    try {
+        const response = await fetch(url, { method: 'POST', body: query });
+        if (!response.ok) return [];
+        const data = await response.json();
+        const features = [];
+        if (data.elements) {
+            data.elements.forEach(el => {
+                const tags = el.tags || {};
+                const type = tags.natural || tags.landuse || tags.highway || tags.leisure;
+                const name = tags.name || type;
+                if (type) features.push(`${name} (${type})`);
+            });
+        }
+        return features;
+    } catch (e) {
+        console.warn("Point data fetch failed", e);
+        return [];
+    }
+}
+
+async function _fetchBarrierData(lat, lon) {
+    const query = `
+      [out:json][timeout:25];
+      (
+        way(around:300, ${lat}, ${lon})["waterway"~"river|canal|stream|drain|ditch"];
+        way(around:300, ${lat}, ${lon})["railway"~"rail|tram|light_rail|subway"];
+        way(around:300, ${lat}, ${lon})["barrier"~"wall|fence|gate|hedge"];
+      );
+      out geom;
+    `;
+
+    const url = 'https://overpass-api.de/api/interpreter';
+    try {
+        const response = await fetch(url, { method: 'POST', body: query });
+        if (!response.ok) return [];
+        const data = await response.json();
+        const barriers = [];
+
+        await ensureLibraryLoaded('turf', LIBS.turf);
+        const t = window.turf || turf;
+
+        if (data.elements) {
+            data.elements.forEach(el => {
+                if (!el.geometry) return;
+                const tags = el.tags || {};
+                // Convert geometry to GeoJSON LineString
+                const coords = el.geometry.map(p => [p.lon, p.lat]);
+                const line = t.lineString(coords);
+                const pt = t.point([lon, lat]);
+                const distMeters = t.pointToLineDistance(pt, line, {units: 'kilometers'}) * 1000;
+
+                if (distMeters <= 300) {
+                    const type = tags.waterway || tags.railway || tags.barrier;
+                    const name = tags.name || type;
+                    barriers.push(`${name} (${type}) - ${Math.round(distMeters)}m`);
+                }
+            });
+        }
+        return barriers;
+    } catch (e) {
+        console.warn("Barrier data fetch failed", e);
+        return [];
+    }
 }
 
 async function askGemini(summaryData, lat, lon, address, locationType, visualTraffic, densityWarning) {
@@ -892,6 +1029,11 @@ map.on('click', (e) => {
                 <b>Координаты:</b> ${lat.toFixed(5)}, ${lng.toFixed(5)}
             </div>
 
+            <div style="margin-bottom:8px; display:flex; align-items:center; justify-content:center; gap:5px; font-size:0.85em;">
+                <input type="checkbox" id="strictAuditCheckbox">
+                <label for="strictAuditCheckbox" style="cursor:pointer;">Строгий режим (Risk Manager)</label>
+            </div>
+
             <button id="btnRunAnalysis" class="primary-btn popup-btn">📊 Анализировать</button>
         </div>
     `;
@@ -908,8 +1050,9 @@ map.on('popupopen', (e) => {
         }
 
         btn.onclick = () => {
+             const isStrict = document.getElementById('strictAuditCheckbox')?.checked;
              if(latlng) {
-                 runAnalysis(latlng);
+                 runAnalysis(latlng, isStrict);
                  map.closePopup();
              }
         };
@@ -930,7 +1073,7 @@ async function getAddress(lat, lon) {
     }
 }
 
-async function runAnalysis(latlng) {
+async function runAnalysis(latlng, isStrict = false) {
     const { lat, lng } = latlng;
     const locationType = "Авто-определение";
     const visualTraffic = "Авто-определение";
@@ -941,13 +1084,21 @@ async function runAnalysis(latlng) {
     document.getElementById('auditLoading').classList.remove('hidden');
 
     try {
-        // Check for Pro Mode
+        // Check for Pro Mode or Strict Mode
         const useProMode = document.getElementById('proModeCheckbox')?.checked;
-        if (useProMode) {
+
+        if (useProMode || isStrict) {
             if (typeof GeomarketingProService === 'undefined') {
                 throw new Error("Pro Service not loaded");
             }
-            const proResult = await GeomarketingProService.runAudit(lat, lng);
+
+            let proResult;
+            if (isStrict) {
+                proResult = await GeomarketingProService.runStrictAudit(lat, lng);
+            } else {
+                proResult = await GeomarketingProService.runAudit(lat, lng);
+            }
+
             renderProAuditResult(proResult);
             return;
         }
