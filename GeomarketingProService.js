@@ -63,14 +63,14 @@ class GeomarketingProService {
         };
     }
 
-    static async runStrictAudit(lat, lng) {
-        console.log("Starting STRICT Audit for:", lat, lng);
+    static async runPopeyesAudit(lat, lng) {
+        console.log("Starting Popeyes Audit for:", lat, lng);
 
         // 1. Gather Data (Tier 1, 2, 3)
         const data = await this.gatherData(lat, lng);
 
-        // 2. Generate Prompt (Strict Mode)
-        const systemPrompt = this.generateStrictPrompt(data);
+        // 2. Generate Prompt (Popeyes Mode)
+        const systemPrompt = this.generatePopeyesPrompt(data);
 
         // 3. Ask AI
         const aiResult = await this.askGeminiPro(systemPrompt, data);
@@ -227,18 +227,19 @@ class GeomarketingProService {
 `;
     }
 
-    static generateStrictPrompt(data) {
+    static generatePopeyesPrompt(data) {
         const pointFeatures = data.osmData.pointFeatures || [];
         const barriers = data.osmData.barriers || [];
         const physical = data.osmData.physicalConstraints || [];
         const negatives = data.osmData.negatives || [];
+        const anchors = data.osmData.anchors || [];
 
         const pointInfo = pointFeatures.length > 0 ? pointFeatures.join(", ") : "Чисто (нет явных преград в точке)";
         const barrierInfo = barriers.length > 0 ? barriers.join(", ") : "Нет барьеров в радиусе 300м";
 
         return `
-Ты — Скептичный Инвестиционный Директор со строгими стандартами безопасности и рентабельности.
-Твоя задача: Провести жесткий аудит локации {${data.lat}, ${data.lng}} и найти причины ОТКАЗАТЬ.
+Ты — Директор по развитию сети Popeyes (Fried Chicken). Твой подход: 'Строгий, но Справедливый'.
+Твоя задача: Оценить локацию ИМЕННО для фастфуда, а не кофейни или бутика.
 
 ВХОДНЫЕ ДАННЫЕ:
 1. ТОЧЕЧНЫЙ АНАЛИЗ (0-10м): ${pointInfo}
@@ -248,35 +249,39 @@ class GeomarketingProService {
 5. Плотность населения: ${data.density} чел/га.
 6. Генераторы трафика: ${data.generators.description}.
 7. Конкуренты: ${data.competitorTypes}.
+8. Якоря (ТРЦ/ВУЗы): ${anchors.join(", ") || "Нет"}
+
+КРИТИЧЕСКИЕ ПРАВИЛА:
+
+ТРЦ (Shopping Mall): Если в радиусе 100м есть крупный ТРЦ — игнорируй низкую плотность населения. Люди едут в ТРЦ специально. Это High Potential.
+
+Бизнес-модель: Popeyes — это жареная курица. Нам не нужна 'уютная атмосфера для работы' (как Starbucks). Нам нужен поток и видимость.
+
+Конкуренты: Наличие KFC/Burger King рядом — это ХОРОШО (сформированный спрос), если мы не стоим 'дверь-в-дверь'. Если конкурентов нет вообще — это риск (нет рынка).
+
+Барьеры: Трасса без перехода — смерть для стрит-ритейла, но норма для Drive-Thru. Учитывай это.
 
 АЛГОРИТМ ПРИНЯТИЯ РЕШЕНИЯ:
 
-ШАГ 1: ПЕРВИЧНЫЙ ФИЛЬТР (SANITY CHECK) - CRITICAL REJECT
-Если в "ТОЧЕЧНОМ АНАЛИЗЕ" указано: вода (water), болото (wetland), трасса (motorway/trunk), кладбище (cemetery), промзона (industrial), лес (forest) или ж/д пути (railway) —
-НЕМЕДЛЕННО ставь Score 0 и Verdict "CRITICAL REJECT".
-Не смотри на окружающие дома. Точка в воде или на трассе = 0 баллов.
+ШАГ 1: ПЕРВИЧНЫЙ ФИЛЬТР (SANITY CHECK)
+Если в "ТОЧЕЧНОМ АНАЛИЗЕ" указано: вода (water), болото (wetland), кладбище (cemetery) —
+CRITICAL REJECT (Score 0).
 
-ШАГ 2: ЛОГИКА ПЕШЕХОДА И БАРЬЕРЫ
-Оцени доступность. Если люди живут в 300м, но между ними и точкой есть БАРЬЕРЫ (река, ж/д, забор), эти клиенты не придут. Снижай Score.
-
-ШАГ 3: ШКАЛА ОЦЕНКИ (STRICT SCORING)
-- 90-100: Идеально (Центр, Пешеходная зона, 1 этаж, нет барьеров).
-- 70-89: Хорошо, но есть нюансы.
-- 40-69: Средне, высокий риск.
-- 0-39: Непригодно (Парк без инфраструктуры, промзона, трасса, пустырь).
-
-Запрещено ставить 80-100 баллов просто за наличие людей вокруг, если сама точка проблемная.
+ШАГ 2: ОЦЕНКА ПОТЕНЦИАЛА
+- Высокая плотность + Конкуренты = High Potential.
+- ТРЦ рядом = High Potential.
+- Пустырь без генераторов = Reject.
 
 ВЕРНИ ТОЛЬКО JSON (строго соблюдай структуру):
 {
   "terrain_check": "Pass/Fail",
   "strategic_verdict": {
     "status": "APPROVED / REJECT / HIGH RISK",
-    "recommendation": "Жесткое обоснование..."
+    "recommendation": "Опиши вывод 2-3 полными предложениями. Почему да или нет?"
   },
   "traffic_score_audit": {
     "score": 0-100,
-    "comment": "Оценка с учетом барьеров..."
+    "comment": "Оценка трафика..."
   },
   "competitor_analysis": {
     "list": [],
@@ -284,7 +289,7 @@ class GeomarketingProService {
     "summary": "Вывод по конкуренции..."
   },
   "risk_factors": ["Риск 1", "Риск 2"],
-  "growth_potential": "Только если есть реальный потенциал...",
+  "growth_potential": "За счет чего будет рост...",
   "cannibalization_analysis": {
       "status": "...",
       "strategy": "..."

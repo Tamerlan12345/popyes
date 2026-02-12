@@ -992,7 +992,7 @@ if (btnToggleAudit) {
 function updateAuditButtonState() {
     const mapEl = document.getElementById('map');
     if (auditModeEnabled) {
-        btnToggleAudit.innerText = "❌ Выключить режим (Кликните на карту)";
+        btnToggleAudit.innerText = "📍 Начать анализ"; // Keep text static as requested
         btnToggleAudit.classList.add('active');
         mapEl.classList.add('map-cursor-audit');
     } else {
@@ -1029,11 +1029,6 @@ map.on('click', (e) => {
                 <b>Координаты:</b> ${lat.toFixed(5)}, ${lng.toFixed(5)}
             </div>
 
-            <div style="margin-bottom:8px; display:flex; align-items:center; justify-content:center; gap:5px; font-size:0.85em;">
-                <input type="checkbox" id="strictAuditCheckbox">
-                <label for="strictAuditCheckbox" style="cursor:pointer;">Строгий режим (Risk Manager)</label>
-            </div>
-
             <button id="btnRunAnalysis" class="primary-btn popup-btn">📊 Анализировать</button>
         </div>
     `;
@@ -1050,9 +1045,8 @@ map.on('popupopen', (e) => {
         }
 
         btn.onclick = () => {
-             const isStrict = document.getElementById('strictAuditCheckbox')?.checked;
              if(latlng) {
-                 runAnalysis(latlng, isStrict);
+                 runAnalysis(latlng);
                  map.closePopup();
              }
         };
@@ -1073,10 +1067,8 @@ async function getAddress(lat, lon) {
     }
 }
 
-async function runAnalysis(latlng, isStrict = false) {
+async function runAnalysis(latlng) {
     const { lat, lng } = latlng;
-    const locationType = "Авто-определение";
-    const visualTraffic = "Авто-определение";
 
     // UI Update
     document.getElementById('auditIntro').classList.add('hidden');
@@ -1084,48 +1076,14 @@ async function runAnalysis(latlng, isStrict = false) {
     document.getElementById('auditLoading').classList.remove('hidden');
 
     try {
-        // Check for Pro Mode or Strict Mode
-        const useProMode = document.getElementById('proModeCheckbox')?.checked;
-
-        if (useProMode || isStrict) {
-            if (typeof GeomarketingProService === 'undefined') {
-                throw new Error("Pro Service not loaded");
-            }
-
-            let proResult;
-            if (isStrict) {
-                proResult = await GeomarketingProService.runStrictAudit(lat, lng);
-            } else {
-                proResult = await GeomarketingProService.runAudit(lat, lng);
-            }
-
-            renderProAuditResult(proResult);
-            return;
+        if (typeof GeomarketingProService === 'undefined') {
+            throw new Error("Pro Service not loaded");
         }
 
-        // 1. Параллельно получаем данные карты и точный адрес
-        const [summary, address] = await Promise.all([
-            getSurroundingData(lat, lng),
-            getAddress(lat, lng)
-        ]);
+        // Always run Popeyes Audit
+        const proResult = await GeomarketingProService.runPopeyesAudit(lat, lng);
 
-        // 2. Hard Block Check
-        if (summary && summary.hasRedFlag) {
-            renderHardBlockResult(summary.redFlagReason);
-            return;
-        }
-
-        // 3. Density Warning
-        let densityWarning = "";
-        if (summary && summary.lowDensity) {
-            densityWarning = "ВНИМАНИЕ: Низкая плотность застройки! (Мало жилья/офисов в 300м).";
-        }
-
-        // 4. Отправляем всё в ИИ
-        const aiResult = await askGemini(summary, lat, lng, address, locationType, visualTraffic, densityWarning);
-
-        // 5. Рисуем результат
-        renderAuditResult(aiResult, summary, locationType, visualTraffic);
+        renderProAuditResult(proResult);
 
     } catch (error) {
         console.error(error);

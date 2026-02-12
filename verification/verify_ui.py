@@ -1,53 +1,79 @@
-from playwright.sync_api import sync_playwright, expect
 import time
+from playwright.sync_api import sync_playwright
 
-def verify_strict_mode_ui(page):
-    # 1. Navigate to the map
-    page.goto("http://localhost:8080")
-
-    # 2. Wait for map to load (leaflet map container)
-    page.wait_for_selector("#map")
-
-    # 3. Click "Start Analysis" (Audit mode)
-    # The button ID is btnToggleAudit. Text "📍 Начать анализ" or "Smart Location" tab?
-    # Default tab is "Earthquakes". We need to switch tab first.
-
-    # Switch tab
-    page.click("#tabAudit")
-    time.sleep(0.5)
-
-    # Enable Audit Mode
-    page.click("#btnToggleAudit")
-    time.sleep(0.5)
-
-    # 4. Click on the map to open popup
-    # Use mouse click at center of map
-    map_el = page.locator("#map")
-    box = map_el.bounding_box()
-    page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-
-    # 5. Wait for popup
-    page.wait_for_selector(".leaflet-popup-content")
-
-    # 6. Check for "Strict Mode" checkbox
-    checkbox = page.locator("#strictAuditCheckbox")
-    expect(checkbox).to_be_visible()
-
-    label = page.locator("label[for='strictAuditCheckbox']")
-    expect(label).to_contain_text("Строгий режим")
-
-    # 7. Take screenshot
-    page.screenshot(path="verification.png")
-    print("Screenshot saved to verification.png")
-
-if __name__ == "__main__":
+def run():
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch()
         page = browser.new_page()
+
         try:
-            verify_strict_mode_ui(page)
+            print("Navigating to http://localhost:8080/index.html")
+            page.goto("http://localhost:8080/index.html")
+
+            # Allow map to initialize
+            time.sleep(2)
+
+            # Click Smart Location tab first
+            tab = page.query_selector("#tabAudit")
+            if tab:
+                print("Clicking 'Smart Location' tab...")
+                tab.click()
+                time.sleep(1) # Wait for tab switch
+            else:
+                print("❌ 'Smart Location' tab not found!")
+                return
+
+            # Check 1: #proModeCheckbox should be gone
+            # It's inside #auditIntro which is now visible
+            if page.query_selector("#proModeCheckbox"):
+                print("❌ #proModeCheckbox FOUND! It should be removed.")
+            else:
+                print("✅ #proModeCheckbox NOT found (Correct).")
+
+            # Click "Start Analysis" button
+            btn = page.query_selector("#btnToggleAudit")
+            if btn:
+                # Wait for visibility
+                if btn.is_visible():
+                    print("Clicking 'Start Analysis' button...")
+                    btn.click()
+                else:
+                    print("❌ 'Start Analysis' button is NOT visible!")
+                    return
+            else:
+                print("❌ 'Start Analysis' button NOT found!")
+                return
+
+            time.sleep(1)
+
+            # Click on the map to trigger popup
+            # Assuming map takes most of the screen
+            print("Clicking on map...")
+            page.mouse.click(600, 400)
+
+            time.sleep(2) # Wait for popup
+
+            # Check 2: Popup should appear
+            popup_content = page.query_selector(".leaflet-popup-content")
+            if popup_content:
+                print("✅ Popup appeared.")
+
+                # Check 3: #strictAuditCheckbox inside popup should be gone
+                if page.query_selector("#strictAuditCheckbox"):
+                    print("❌ #strictAuditCheckbox FOUND in popup! It should be removed.")
+                else:
+                    print("✅ #strictAuditCheckbox NOT found in popup (Correct).")
+            else:
+                print("❌ Popup did NOT appear.")
+
+            # Take screenshot
+            page.screenshot(path="verification.png")
+            print("Screenshot saved to verification.png")
+
         except Exception as e:
             print(f"Error: {e}")
-            page.screenshot(path="verification_error.png")
         finally:
             browser.close()
+
+if __name__ == "__main__":
+    run()
