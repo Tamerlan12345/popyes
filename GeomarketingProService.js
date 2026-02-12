@@ -76,7 +76,10 @@ class WorldPopService {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
 
-            const response = await fetch(url, { signal: controller.signal });
+            const response = await fetch(url, {
+                signal: controller.signal,
+                headers: { 'Accept': 'application/json' }
+            });
             clearTimeout(timeoutId);
 
             if (!response.ok) throw new Error(`WorldPop Error: ${response.status}`);

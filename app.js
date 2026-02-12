@@ -487,9 +487,9 @@ async function getSurroundingData(lat, lon) {
 }
 
 async function _fetchMainData(lat, lon) {
-    // Увеличили таймаут до 45 секунд
+    // Увеличили таймаут до 90 секунд (Task 2)
     const query = `
-      [out:json][timeout:45];
+      [out:json][timeout:90];
       (
         node(around:500, ${lat}, ${lon})["amenity"~"fast_food|cafe|restaurant|pub|bar|food_court|biergarten"];
         way(around:500, ${lat}, ${lon})["amenity"~"fast_food|cafe|restaurant|pub|bar|food_court|biergarten"];
@@ -527,41 +527,65 @@ async function _fetchMainData(lat, lon) {
       out center;
     `;
 
-    const url = 'https://overpass-api.de/api/interpreter';
+    // Failover servers (Task 2)
+    const servers = [
+        'https://overpass-api.de/api/interpreter',
+        'https://overpass.kumi.systems/api/interpreter'
+    ];
 
-    try {
-        const response = await fetch(url, {
-            method: 'POST',
-            body: query
-            // Убрали headers, чтобы избежать лишних проблем с CORS/OPTIONS
-        });
-
-        if (!response.ok) {
-            console.warn(`Overpass API returned status ${response.status}. Skipping map data.`);
-            return null; // Возвращаем null, но НЕ ошибку, чтобы программа работала дальше
-        }
-
-        const text = await response.text();
-        
-        // Проверяем, не вернул ли сервер HTML (ошибку) вместо JSON
-        if (text.trim().startsWith('<')) {
-             console.warn("Overpass API returned HTML error. Skipping.");
-             return null;
-        }
-
+    for (const url of servers) {
         try {
-            const data = JSON.parse(text);
-            return parseOverpassData(data, lat, lon);
-        } catch (jsonError) {
-            console.warn("Failed to parse Overpass JSON:", jsonError);
-            return null;
-        }
+            console.log(`Trying Overpass server: ${url}`);
 
-    } catch (e) {
-        console.error("Overpass API connection failed:", e);
-        // Не выбрасываем ошибку (throw e), а возвращаем null, чтобы Gemini мог работать через поиск
-        return null; 
+            // Set JS signal timeout to 100s (Task 2)
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 100000);
+
+            const response = await fetch(url, {
+                method: 'POST',
+                body: query,
+                signal: controller.signal
+                // Убрали headers, чтобы избежать лишних проблем с CORS/OPTIONS
+            });
+
+            clearTimeout(timeoutId);
+
+            if (response.status === 429 || response.status === 504) {
+                console.warn(`Overpass API ${url} returned status ${response.status}. Retrying next server...`);
+                continue; // Try next server
+            }
+
+            if (!response.ok) {
+                console.warn(`Overpass API ${url} returned status ${response.status}. Skipping map data.`);
+                continue; // Try next server just in case
+            }
+
+            const text = await response.text();
+
+            // Проверяем, не вернул ли сервер HTML (ошибку) вместо JSON
+            if (text.trim().startsWith('<')) {
+                 console.warn(`Overpass API ${url} returned HTML error. Retrying next...`);
+                 continue;
+            }
+
+            try {
+                const data = JSON.parse(text);
+                return parseOverpassData(data, lat, lon);
+            } catch (jsonError) {
+                console.warn(`Failed to parse Overpass JSON from ${url}:`, jsonError);
+                continue; // Try next server
+            }
+
+        } catch (e) {
+            console.error(`Overpass API connection failed for ${url}:`, e);
+            // Try next server
+        }
     }
+
+    // If all servers failed
+    console.error("All Overpass servers failed.");
+    // Не выбрасываем ошибку (throw e), а возвращаем null, чтобы Gemini мог работать через поиск
+    return null;
 }
 
 function parseOverpassData(data, centerLat, centerLon) {
