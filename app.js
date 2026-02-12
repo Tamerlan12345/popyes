@@ -1086,14 +1086,19 @@ async function runAnalysis(latlng, isStrict = false) {
     try {
         // Check for Pro Mode or Strict Mode
         const useProMode = document.getElementById('proModeCheckbox')?.checked;
+        const useBoardMode = document.getElementById('boardAuditCheckbox')?.checked;
 
-        if (useProMode || isStrict) {
+        if (useProMode || isStrict || useBoardMode) {
             if (typeof GeomarketingProService === 'undefined') {
                 throw new Error("Pro Service not loaded");
             }
 
             let proResult;
-            if (isStrict) {
+            if (useBoardMode) {
+                 proResult = await GeomarketingProService.runBoardAudit(lat, lng);
+                 renderBoardAuditResult(proResult);
+                 return;
+            } else if (isStrict) {
                 proResult = await GeomarketingProService.runStrictAudit(lat, lng);
             } else {
                 proResult = await GeomarketingProService.runAudit(lat, lng);
@@ -1200,6 +1205,120 @@ function renderAuditResult(data, summary, locationType, visualTraffic) {
             <div style="color: #047857; font-weight: bold; font-size: 0.9em;">💡 Совет маркетолога:</div>
             <div style="font-size: 0.9em; color: #065f46;">${data.marketing_advice}</div>
         </div>
+
+        <button id="btnResetAudit" class="primary-btn" style="margin-top: 15px; background-color: #6c757d;">🔄 Новый поиск</button>
+    `;
+
+    container.innerHTML = html;
+    container.classList.remove('hidden');
+
+    const btnReset = document.getElementById('btnResetAudit');
+    if(btnReset) {
+        btnReset.addEventListener('click', () => {
+            container.classList.add('hidden');
+            document.getElementById('auditIntro').classList.remove('hidden');
+        });
+    }
+}
+
+function renderBoardAuditResult(data) {
+    const container = document.getElementById('auditResult');
+    container.innerHTML = '';
+
+    // 1. Sanity Check / Terrain Block
+    if (data.terrain_check === "Fail") {
+        renderHardBlockResult(`Локация непригодна (Critical Filter): ${data.ceo_verdict ? data.ceo_verdict.decision : 'Находится в запретной зоне (вода, лес, трасса)'}`);
+        return;
+    }
+
+    const { ceo_verdict, board_opinions, competitor_analysis, risk_factors, growth_potential, rawData } = data;
+
+    // Competitors Table/List
+    let competitorsHtml = '<div style="font-style:italic; color:#64748b;">Нет данных о конкурентах</div>';
+    if (competitor_analysis && competitor_analysis.list && competitor_analysis.list.length > 0) {
+        competitorsHtml = '<div class="competitors-list" style="display:flex; flex-direction:column; gap:8px;">';
+        competitor_analysis.list.forEach(comp => {
+             const riskColor = comp.risk === 'High' ? '#ef4444' : (comp.risk === 'Medium' ? '#f59e0b' : '#10b981');
+             competitorsHtml += `
+                <div style="display:flex; justify-content:space-between; align-items:center; background:white; padding:8px; border-radius:4px; border:1px solid #e2e8f0;">
+                    <div>
+                        <div style="font-weight:600; font-size:0.9em;">${comp.name}</div>
+                        <div style="font-size:0.8em; color:#64748b;">${comp.type || 'N/A'} • ${comp.dist}</div>
+                    </div>
+                    <div style="font-size:0.8em; font-weight:bold; color:${riskColor};">${comp.risk} Risk</div>
+                </div>
+             `;
+        });
+        competitorsHtml += '</div>';
+    }
+
+    // Verdict Color
+    let verdictColor = '#10b981'; // Green
+    if (ceo_verdict.score < 40) verdictColor = '#ef4444'; // Red
+    else if (ceo_verdict.score < 70) verdictColor = '#f59e0b'; // Yellow
+
+    const html = `
+        <div class="audit-score-card" style="background: linear-gradient(135deg, #312e81 0%, #1e1b4b 100%); color: white; border: 1px solid #4338ca; position:relative; overflow:hidden;">
+            <div style="position:absolute; top:-10px; right:-10px; opacity:0.1; font-size:100px;">🏛️</div>
+            <div style="font-size: 0.8rem; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 5px; opacity: 0.7;">Board of Directors Decision</div>
+            <div style="font-size: 3rem; font-weight: bold; text-shadow: 0 4px 6px rgba(0,0,0,0.3);">${ceo_verdict.score}/100</div>
+            <div style="font-size: 1.2rem; font-weight:600; color:${verdictColor}; background:rgba(255,255,255,0.1); padding:4px 12px; border-radius:20px; display:inline-block; margin-top:5px;">
+                ${ceo_verdict.decision}
+            </div>
+            <div style="font-size: 0.95rem; opacity: 0.9; margin-top:10px; font-style:italic;">"${ceo_verdict.synthesis}"</div>
+        </div>
+
+        <div class="raw-data-container" style="background: #f1f5f9; border: 1px solid #e2e8f0;">
+            <div class="raw-data-title" style="color: #334155;">📊 Данные (Kontur + OSM)</div>
+            <div class="raw-data-item"><span>👥 Плотность:</span> <b>${rawData.density} чел/га</b></div>
+            <div class="raw-data-item"><span>🚀 Генераторы:</span> <b>Score ${rawData.generators.totalScore}</b></div>
+            <div class="raw-data-item"><span>🍔 Конкуренты:</span> <b>${rawData.competitorCount}</b></div>
+        </div>
+
+        <div class="audit-section-title" style="margin-top:20px;">🗣️ Мнения Совета Директоров</div>
+
+        <div style="display:flex; flex-direction:column; gap:10px;">
+            <!-- Development Manager -->
+            <div style="background: #fff; padding: 12px; border-radius: 8px; border-left: 4px solid #3b82f6; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                <div style="font-weight:bold; color:#1e40af; font-size:0.9em; margin-bottom:5px;">🏗️ Development Manager</div>
+                <div style="font-size:0.9em; color:#334155;">
+                    <div><b>Traffic:</b> ${board_opinions.development_manager.traffic_verdict}</div>
+                    <div style="margin-top:4px;">${board_opinions.development_manager.density_analysis}</div>
+                    <div style="margin-top:4px; font-style:italic;">"${board_opinions.development_manager.generators_analysis}"</div>
+                </div>
+            </div>
+
+            <!-- COO -->
+            <div style="background: #fff; padding: 12px; border-radius: 8px; border-left: 4px solid #f59e0b; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                <div style="font-weight:bold; color:#92400e; font-size:0.9em; margin-bottom:5px;">⚙️ COO (Operations)</div>
+                <div style="font-size:0.9em; color:#334155;">
+                     <div><b>Cannibalization:</b> ${board_opinions.coo.cannibalization_risk} Risk</div>
+                     <div style="margin-top:4px;">${board_opinions.coo.barriers_analysis}</div>
+                     <div style="margin-top:4px; font-style:italic;">"${board_opinions.coo.logistics_comment}"</div>
+                </div>
+            </div>
+
+            <!-- CFO -->
+            <div style="background: #fff; padding: 12px; border-radius: 8px; border-left: 4px solid #ef4444; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                <div style="font-weight:bold; color:#991b1b; font-size:0.9em; margin-bottom:5px;">💰 CFO (Finance)</div>
+                <div style="font-size:0.9em; color:#334155;">
+                     <div><b>Capital Loss Risk:</b> ${board_opinions.cfo.capital_loss_risk}</div>
+                     <div style="margin-top:4px; font-style:italic;">"${board_opinions.cfo.opportunity_cost_analysis}"</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="audit-section-title" style="margin-top:15px;">⚔️ Конкуренция</div>
+        <div style="margin-bottom:5px; font-size:0.9em; color:#334155;">${competitor_analysis.summary || ''}</div>
+        <div style="background:#f8fafc; padding:10px; border-radius:8px; max-height:150px; overflow-y:auto;">
+            ${competitorsHtml}
+        </div>
+
+        <div class="audit-section-title" style="margin-top:15px;">🚦 Итоги</div>
+        <ul style="font-size: 0.9em; padding-left: 20px; color: #334155;">
+             <li style="margin-bottom: 5px;"><b>Рост:</b> ${growth_potential}</li>
+             <li style="margin-bottom: 5px;"><b>Риски:</b> ${risk_factors && risk_factors.length ? risk_factors.join(", ") : "Нет явных рисков"}</li>
+        </ul>
 
         <button id="btnResetAudit" class="primary-btn" style="margin-top: 15px; background-color: #6c757d;">🔄 Новый поиск</button>
     `;

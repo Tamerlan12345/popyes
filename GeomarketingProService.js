@@ -63,6 +63,24 @@ class GeomarketingProService {
         };
     }
 
+    static async runBoardAudit(lat, lng) {
+        console.log("Starting Board of Directors Audit for:", lat, lng);
+
+        // 1. Gather Data
+        const data = await this.gatherData(lat, lng);
+
+        // 2. Generate Board Meeting Prompt
+        const systemPrompt = this.generateBoardMeetingPrompt(data);
+
+        // 3. Ask AI
+        const aiResult = await this.askGeminiPro(systemPrompt, data);
+
+        return {
+            ...aiResult,
+            rawData: data
+        };
+    }
+
     static async runStrictAudit(lat, lng) {
         console.log("Starting STRICT Audit for:", lat, lng);
 
@@ -220,6 +238,95 @@ class GeomarketingProService {
   "strategic_verdict": {
     "status": "High Potential / Risky / No Go",
     "recommendation": "Финальное решение директора..."
+  },
+  "risk_factors": ["Риск 1", "Риск 2"],
+  "growth_potential": "За счет чего будет рост..."
+}
+`;
+    }
+
+    static generateBoardMeetingPrompt(data) {
+        const pointFeatures = data.osmData.pointFeatures || [];
+        const barriers = data.osmData.barriers || [];
+        const physical = data.osmData.physicalConstraints || [];
+        const negatives = data.osmData.negatives || [];
+
+        const pointInfo = pointFeatures.length > 0 ? pointFeatures.join(", ") : "Чисто (нет явных преград в точке)";
+        const barrierInfo = barriers.length > 0 ? barriers.join(", ") : "Нет барьеров в радиусе 300м";
+        const constraints = [...physical, ...negatives];
+        const constraintInfo = constraints.length > 0 ? constraints.join(", ") : "Нет критических ограничений";
+
+        const existingPopeyes = data.osmData.existingPopeyesPoints && data.osmData.existingPopeyesPoints.length > 0
+             ? data.osmData.existingPopeyesPoints.join(", ")
+             : "Нет существующих точек Popeyes";
+
+        return `
+CONTEXT: Ты — эмулятор Совета Директоров (Board of Directors) международной QSR сети (Popeyes).
+Твоя задача — провести мульти-ролевой аудит локации {${data.lat}, ${data.lng}} и вынести коллективное решение.
+
+INPUT DATA:
+1. Точка (0-15м): ${pointInfo}
+2. Барьеры (300м): ${barrierInfo}
+3. Ограничения: ${constraintInfo}
+4. Плотность: ${data.density} чел/га.
+5. Генераторы трафика (Score: ${data.generators.totalScore}): ${data.generators.description}.
+6. Конкуренты: ${data.competitorTypes}.
+7. Существующие точки Popeyes: ${existingPopeyes}
+
+PROTOCOL:
+
+ШАГ 0: CRITICAL FILTER (Автоматическая система безопасности)
+Если локация находится в воде (water/lake/river), лесу (forest), на шоссе (motorway/trunk) или кладбище (cemetery) — НЕМЕДЛЕННО вернуть Score: 0 и Status: "Technical Error / Invalid Location". Без обсуждений.
+(Проверь поле "Точка" и "Ограничения").
+
+ШАГ 1: ОТЧЕТ DEVELOPMENT MANAGER (Оценка потенциала)
+- Анализ плотности населения. Если < 40 чел/га — это риск (Low Density).
+- Анализ генераторов (ВУЗы, Офисы).
+- Вердикт по трафику: Low / Medium / High.
+
+ШАГ 2: ОТЧЕТ COO (Операционный директор)
+- Каннибализация: Есть ли наши точки ближе 1 км? Если да — это оправдано (кластер) или глупость?
+- Барьеры: Есть ли река/забор/ж-д пути между жильем и точкой? Если да — клиенты не дойдут.
+
+ШАГ 3: ОТЧЕТ CFO (Финансовый директор)
+- Оцени риск потери инвестиций (Capital Loss Risk): High/Low.
+- Обоснование: "Мы заморозим деньги в мертвой зоне" ИЛИ "Риск оправдан высоким потенциалом".
+- НЕ считай P&L, оценивай Opportunity Cost.
+
+ШАГ 4: ВЕРДИКТ CEO (Синтез)
+- Итоговый Score (0-100). Строгое ограничение: НИКОГДА не больше 100.
+- Решение: Approved / Conditional Approval / Reject.
+- Взвесь риски CFO и возможности Development Manager.
+
+OUTPUT FORMAT: ВЕРНИ ТОЛЬКО JSON (строго соблюдай структуру):
+{
+  "terrain_check": "Pass/Fail",
+  "board_opinions": {
+      "development_manager": {
+          "traffic_verdict": "Low/Medium/High",
+          "density_analysis": "Комментарий по плотности...",
+          "generators_analysis": "Комментарий по генераторам..."
+      },
+      "coo": {
+          "cannibalization_risk": "High/Medium/Low",
+          "barriers_analysis": "Комментарий по доступности...",
+          "logistics_comment": "Мнение COO..."
+      },
+      "cfo": {
+          "capital_loss_risk": "High/Low",
+          "opportunity_cost_analysis": "Мнение CFO..."
+      }
+  },
+  "ceo_verdict": {
+      "score": 0-100,
+      "decision": "Approved / Conditional Approval / Reject",
+      "synthesis": "Финальное решение, объединяющее все мнения..."
+  },
+  "competitor_analysis": {
+    "list": [
+      {"name": "Competitor Name", "dist": "120m", "type": "fast_food", "risk": "High"}
+    ],
+    "summary": "Краткий вывод по конкуренции"
   },
   "risk_factors": ["Риск 1", "Риск 2"],
   "growth_potential": "За счет чего будет рост..."
