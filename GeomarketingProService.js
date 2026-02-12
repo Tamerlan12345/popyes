@@ -42,6 +42,65 @@ class HexagonDataService {
     }
 }
 
+// ---- WorldPop Service (Tier 2 Source: Real Data) ----
+class WorldPopService {
+    static async getPopulation(lat, lng) {
+        // Create 500m bounding box (approx 0.0045 deg)
+        const r = 0.0045;
+        const minLon = lng - r;
+        const maxLon = lng + r;
+        const minLat = lat - r;
+        const maxLat = lat + r;
+
+        // GeoJSON Polygon for WorldPop
+        const geojson = {
+            "type": "Feature",
+            "properties": {},
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [minLon, minLat],
+                    [maxLon, minLat],
+                    [maxLon, maxLat],
+                    [minLon, maxLat],
+                    [minLon, minLat]
+                ]]
+            }
+        };
+
+        // API Endpoint (Dataset 2020)
+        const url = `https://api.worldpop.org/v1/services/stats?dataset=wpgppop&year=2020&geojson=${JSON.stringify(geojson)}&runasync=false`;
+
+        try {
+            // Fetch with timeout
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+
+            const response = await fetch(url, { signal: controller.signal });
+            clearTimeout(timeoutId);
+
+            if (!response.ok) throw new Error(`WorldPop Error: ${response.status}`);
+            const data = await response.json();
+
+            // Expected format: { "data": { "total_population": 1234.5, ... } }
+            if (data && data.data && typeof data.data.total_population === 'number') {
+                console.log("WorldPop Success:", data.data.total_population);
+                return {
+                    population: Math.round(data.data.total_population),
+                    is_projected: false
+                };
+            }
+            throw new Error("Invalid Data Format");
+        } catch (e) {
+            console.warn("WorldPop Service failed:", e);
+            return {
+                population: null, // Return null to trigger fallback
+                is_projected: true
+            };
+        }
+    }
+}
+
 // ---- Geomarketing Pro Service (DataHunters Methodology) ----
 class GeomarketingProService {
 
@@ -64,21 +123,165 @@ class GeomarketingProService {
     }
 
     static async runPopeyesAudit(lat, lng) {
-        console.log("Starting Popeyes Audit for:", lat, lng);
+        // Redirect to new GeoAudit 2.0 Logic
+        return this.runGeoAudit2(lat, lng);
+    }
 
-        // 1. Gather Data (Tier 1, 2, 3)
-        const data = await this.gatherData(lat, lng);
+    static async runGeoAudit2(lat, lng) {
+        console.log("Starting GeoAudit 2.0 for:", lat, lng);
 
-        // 2. Generate Prompt (Popeyes Mode)
+        // --- LEVEL 1: Gather Data & Engineering Filter ---
+
+        // 1. Basic OSM Data (Levels 1 & 3)
+        if (typeof getSurroundingData !== 'function') {
+            throw new Error("Standard analysis function 'getSurroundingData' not found.");
+        }
+        let osmData = await getSurroundingData(lat, lng);
+
+        if (!osmData) {
+            console.warn("OSM Data fetch failed. Using empty fallback.");
+            osmData = {
+                population: 0,
+                apartments: { count: 0 },
+                competitors: [],
+                anchors: [],
+                vibrancy: {},
+                pointFeatures: [],
+                hasRedFlag: false,
+                redFlagReason: null
+            };
+        }
+
+        // 2. Hard Reject Check (Taboo Zones)
+        if (osmData.hasRedFlag) {
+            console.warn("Hard Reject Triggered:", osmData.redFlagReason);
+            return {
+                isHardReject: true,
+                rejectReason: osmData.redFlagReason,
+                terrain_check: "Fail"
+            };
+        }
+
+        // --- LEVEL 2: Real Demography (WorldPop) ---
+        let popData = await WorldPopService.getPopulation(lat, lng);
+
+        // Fallback: Roof Counting
+        if (popData.population === null) {
+            console.log("Using Roof Counting Fallback");
+            // osmData.population was calculated as levels * 4. Requirement says levels * 3.5.
+            // Let's recalculate based on apartments count and levels if possible,
+            // but osmData.population is already summarized.
+            // osmData.population = levels * 4.
+            // So: population / 4 * 3.5 = population * 0.875.
+            popData.population = Math.round(osmData.population * 0.875);
+            popData.is_projected = true;
+        }
+
+        // --- LEVEL 3: Vibrancy & Scoring ---
+        const vibrancyScore = this.calculateVibrancyScore(osmData.vibrancy || {});
+        const geoScore = this.calculateGeoAuditScore(popData.population, vibrancyScore, osmData);
+
+        // Prepare Data for AI
+        const data = {
+            lat, lng,
+            real_population_500m: popData.population,
+            is_projected: popData.is_projected,
+            vibrancy_score: vibrancyScore,
+            score: geoScore,
+            osmData: osmData,
+            competitors_list: osmData.competitors.join(", "),
+            anchors_list: osmData.anchors.join(", ")
+        };
+
+        // --- AI PROMPT & EXECUTION ---
         const systemPrompt = this.generatePopeyesPrompt(data);
-
-        // 3. Ask AI
         const aiResult = await this.askGeminiPro(systemPrompt, data);
 
+        // Merge Results
         return {
-            ...aiResult,
-            rawData: data
+            ...aiResult, // AI Verdict, Proof Points, Risks
+            score: geoScore, // Override AI score with Math score? Or keep math score as base?
+                             // The prompt asks AI to output 'score', but requirement says:
+                             // "Перед отправкой в ИИ, скрипт должен посчитать базовый балл, чтобы ИИ опирался на математику."
+                             // The AI JSON output has 'score'.
+                             // Let's use the Math Score for the UI as primary, or let AI adjust it?
+                             // Requirement 4 UI: "Score (Green > 70...)"
+                             // Usually we trust the Math Score more for consistency.
+                             // But AI might find nuances.
+                             // Let's assume the AI *confirms* the score or we just use `geoScore`.
+                             // For now, I will return `geoScore` in the top level object to ensure UI uses it.
+            metrics: {
+                real_population_500m: popData.population,
+                is_projected: popData.is_projected,
+                vibrancy_score: vibrancyScore,
+                competitors_count: osmData.competitors.length
+            },
+            rawData: {
+                density: Math.round(popData.population / 78.5), // approx density
+                estimatedPopulation: popData.population,
+                competitorCount: osmData.competitors.length,
+                generators: { totalScore: geoScore } // reuse structure for compatibility if needed
+            }
         };
+    }
+
+    static calculateVibrancyScore(metrics) {
+        if (!metrics) return 0;
+        let score = 0;
+        // 1. Financial (+2)
+        if ((metrics.atms || 0) > 0 || (metrics.banks || 0) > 0) score += 2;
+        // 2. Transport (+3)
+        if ((metrics.transport_100m || 0) > 0) score += 3;
+        // 3. Retail Neighbors > 3 (+3)
+        if ((metrics.retail_count_50m || 0) > 3) score += 3;
+        // 4. Pedestrian Network (+2)
+        if ((metrics.crossings || 0) > 0 || (metrics.footways || 0) > 0) score += 2;
+
+        return Math.min(score, 10);
+    }
+
+    static calculateGeoAuditScore(population, vibrancyScore, osmData) {
+        let score = 0;
+
+        // 1. Demography (Max 40)
+        if (population > 5000) score += 40;
+        else if (population >= 2000) score += 30;
+        else score += 10;
+
+        // 2. Traffic Generators (Max 30)
+        let genScore = 0;
+        // Check for Mall in anchors (heuristic string check)
+        // Format "Name (dist)"
+        const hasMall200 = osmData.anchors.some(a => {
+            const isMall = a.toLowerCase().includes('mall') || a.toLowerCase().includes('тц') || a.toLowerCase().includes('plaza');
+            const distMatch = a.match(/(\d+)m/);
+            const dist = distMatch ? parseInt(distMatch[1]) : 999;
+            return isMall && dist <= 200;
+        });
+
+        if (hasMall200) {
+            genScore = 30;
+        } else {
+            if (osmData.universities > 0) genScore = Math.max(genScore, 20);
+            if (osmData.offices > 0) genScore = Math.max(genScore, 15);
+        }
+        score += Math.min(genScore, 30);
+
+        // 3. Micro-location (Max 30)
+        let microScore = 0;
+        // Stop/ATM < 100m (using 100m data as proxy for 50m request)
+        if (osmData.vibrancy && osmData.vibrancy.transport_100m > 0) microScore += 10;
+        if (osmData.vibrancy && (osmData.vibrancy.atms > 0 || osmData.vibrancy.banks > 0)) microScore += 10;
+
+        // Visibility (1st line) - using pointFeatures for primary/secondary roads check
+        const isMainRoad = osmData.pointFeatures.some(f =>
+            f.includes('primary') || f.includes('secondary') || f.includes('trunk')
+        );
+        if (isMainRoad) microScore += 10;
+
+        score += Math.min(microScore, 30);
+
+        return Math.min(score, 100);
     }
 
     static async gatherData(lat, lng) {
@@ -228,72 +431,49 @@ class GeomarketingProService {
     }
 
     static generatePopeyesPrompt(data) {
-        const pointFeatures = data.osmData.pointFeatures || [];
-        const barriers = data.osmData.barriers || [];
+        // Prepare constraints string
         const physical = data.osmData.physicalConstraints || [];
         const negatives = data.osmData.negatives || [];
-        const anchors = data.osmData.anchors || [];
-
-        const pointInfo = pointFeatures.length > 0 ? pointFeatures.join(", ") : "Чисто (нет явных преград в точке)";
-        const barrierInfo = barriers.length > 0 ? barriers.join(", ") : "Нет барьеров в радиусе 300м";
+        const combinedConstraints = [...physical, ...negatives];
+        const constraintsStr = combinedConstraints.length > 0 ? combinedConstraints.join(", ") : "Нет явных ограничений";
 
         return `
-Ты — Директор по развитию сети Popeyes (Fried Chicken). Твой подход: 'Строгий, но Справедливый'.
-Твоя задача: Оценить локацию ИМЕННО для фастфуда, а не кофейни или бутика.
+ТЫ — ОПЫТНЫЙ ДЕВЕЛОПЕР МЕЖДУНАРОДНОЙ СЕТИ POPEYES.
+Твоя задача: Объективно оценить локацию на основе ФАКТОВ.
+Ты должен не просто критиковать, а искать ПОТЕНЦИАЛ. Твоя цель — подтвердить, можно ли здесь заработать деньги.
 
 ВХОДНЫЕ ДАННЫЕ:
-1. ТОЧЕЧНЫЙ АНАЛИЗ (0-10м): ${pointInfo}
-2. БАРЬЕРЫ (до 300м): ${barrierInfo}
-3. Физические ограничения (100м): ${physical.join(", ") || "Нет"}
-4. Негативные факторы: ${negatives.join(", ") || "Нет"}
-5. Плотность населения: ${data.density} чел/га.
-6. Генераторы трафика: ${data.generators.description}.
-7. Конкуренты: ${data.competitorTypes}.
-8. Якоря (ТРЦ/ВУЗы): ${anchors.join(", ") || "Нет"}
+1. НАСЕЛЕНИЕ (WorldPop/Real Data): ${data.real_population_500m} чел. (В радиусе 500м). ${data.is_projected ? "(Расчетное значение)" : "(Точные данные)"}
+2. АКТИВНОСТЬ (Vibrancy Score): ${data.vibrancy_score}/10. (Наличие банкоматов, остановок, соседей).
+3. КОНКУРЕНТЫ: ${data.competitors_list || "Нет данных"}.
+4. ЯКОРЯ: ${data.anchors_list || "Нет данных"} (Школы, Офисы, ТЦ).
+5. ОГРАНИЧЕНИЯ: ${constraintsStr}.
+6. МАТЕМАТИЧЕСКИЙ СКОР: ${data.score}/100.
 
-КРИТИЧЕСКИЕ ПРАВИЛА:
+АЛГОРИТМ ПРИНЯТИЯ РЕШЕНИЯ (Proof-of-Success):
 
-ТРЦ (Shopping Mall): Если в радиусе 100м есть крупный ТРЦ — игнорируй низкую плотность населения. Люди едут в ТРЦ специально. Это High Potential.
+ШАГ 1: ОЦЕНКА ЕМКОСТИ РЫНКА
+- Если Население > 3000 чел: Это база для Strong Hold.
+- Если Население < 1000, НО есть Офисы/ВУЗы: Это Lunch-локация. Потенциал есть.
+- Если Население < 1000 и нет якорей: Только тогда пиши Reject.
 
-Бизнес-модель: Popeyes — это жареная курица. Нам не нужна 'уютная атмосфера для работы' (как Starbucks). Нам нужен поток и видимость.
+ШАГ 2: АНАЛИЗ КОНКУРЕНТОВ (Сигнал спроса)
+- Если рядом KFC/Burger King: ЭТО ХОРОШО. Значит, трафик уже сформирован. Мы встаем рядом и забираем долю рынка.
+- Если конкурентов нет вообще: Это риск "Первопроходца". Нужно проверить, есть ли там люди вообще.
 
-Конкуренты: Наличие KFC/Burger King рядом — это ХОРОШО (сформированный спрос), если мы не стоим 'дверь-в-дверь'. Если конкурентов нет вообще — это риск (нет рынка).
-
-Барьеры: Трасса без перехода — смерть для стрит-ритейла, но норма для Drive-Thru. Учитывай это.
-
-АЛГОРИТМ ПРИНЯТИЯ РЕШЕНИЯ:
-
-ШАГ 1: ПЕРВИЧНЫЙ ФИЛЬТР (SANITY CHECK)
-Если в "ТОЧЕЧНОМ АНАЛИЗЕ" указано: вода (water), болото (wetland), кладбище (cemetery) —
-CRITICAL REJECT (Score 0).
-
-ШАГ 2: ОЦЕНКА ПОТЕНЦИАЛА
-- Высокая плотность + Конкуренты = High Potential.
-- ТРЦ рядом = High Potential.
-- Пустырь без генераторов = Reject.
+ШАГ 3: ВЕРДИКТ (OUTPUT)
+Сформируй ответ в формате JSON.
+Поле "verdict_title": Короткий, мощный заголовок (напр. "Высокий потенциал: Битва с KFC" или "Скрытая жемчужина спального района").
+Поле "proof_points": 3 конкретных факта, ПОЧЕМУ здесь стоит открыться (напр. "Огромная плотность по WorldPop", "Готовый трафик от остановки").
+Поле "recommendation": Четкая инструкция (напр. "Требуется агрессивный маркетинг, чтобы переманить людей из Burger King").
+Поле "risk_factors": Список рисков (напр. "Низкий пешеходный трафик", "Мало парковок").
 
 ВЕРНИ ТОЛЬКО JSON (строго соблюдай структуру):
 {
-  "terrain_check": "Pass/Fail",
-  "strategic_verdict": {
-    "status": "APPROVED / REJECT / HIGH RISK",
-    "recommendation": "Опиши вывод 2-3 полными предложениями. Почему да или нет?"
-  },
-  "traffic_score_audit": {
-    "score": 0-100,
-    "comment": "Оценка трафика..."
-  },
-  "competitor_analysis": {
-    "list": [],
-    "cannibalization_risk": "High/Medium/Low",
-    "summary": "Вывод по конкуренции..."
-  },
-  "risk_factors": ["Риск 1", "Риск 2"],
-  "growth_potential": "За счет чего будет рост...",
-  "cannibalization_analysis": {
-      "status": "...",
-      "strategy": "..."
-  }
+  "verdict_title": "...",
+  "proof_points": ["Факт 1", "Факт 2", "Факт 3"],
+  "recommendation": "...",
+  "risk_factors": ["Риск 1", "Риск 2"]
 }
 `;
     }
