@@ -1,0 +1,8 @@
+127.0.0.1 - - [12/Feb/2026 05:40:34] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [12/Feb/2026 05:40:34] "GET /style.css HTTP/1.1" 200 -
+127.0.0.1 - - [12/Feb/2026 05:40:34] "GET /leaflet.pattern.js HTTP/1.1" 200 -
+127.0.0.1 - - [12/Feb/2026 05:40:34] "GET /GeomarketingProService.js HTTP/1.1" 200 -
+127.0.0.1 - - [12/Feb/2026 05:40:34] "GET /logo.png HTTP/1.1" 200 -
+127.0.0.1 - - [12/Feb/2026 05:40:34] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [12/Feb/2026 05:40:35] "GET /kaz_adm1_simplified.geojson HTTP/1.1" 200 -
+127.0.0.1 - - [12/Feb/2026 05:40:35] "GET /kz_risk_zones.geojson HTTP/1.1" 200 -
