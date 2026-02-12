@@ -45,7 +45,7 @@ class HexagonDataService {
 // ---- Geomarketing Pro Service (DataHunters Methodology) ----
 class GeomarketingProService {
 
-    static async runAudit(lat, lng) {
+    static async _legacy_runAudit(lat, lng) {
         console.log("Starting Pro Audit for:", lat, lng);
 
         // 1. Gather Data (Tier 1, 2, 3)
@@ -55,6 +55,72 @@ class GeomarketingProService {
         const systemPrompt = this.generateStrategyPrompt(data);
 
         // 3. Ask AI
+        const aiResult = await this.askGeminiPro(systemPrompt, data);
+
+        return {
+            ...aiResult,
+            rawData: data
+        };
+    }
+
+    static async runAudit(lat, lng) {
+        console.log("Starting BOARD Audit for:", lat, lng);
+
+        // 1. Gather Data (Tier 1, 2, 3)
+        const data = await this.gatherData(lat, lng);
+
+        // 2. Hard Block (Pre-Flight Check)
+        const criticalTypes = ['water', 'wetland', 'motorway', 'motorway_link', 'trunk', 'trunk_link', 'cemetery', 'industrial', 'forest', 'railway'];
+        const pointFeatures = data.osmData.pointFeatures || [];
+
+        let hardBlockReason = null;
+
+        // Check point features
+        for (const feature of pointFeatures) {
+            // Feature string is like "Name (type)"
+            const match = feature.match(/\(([^)]+)\)/);
+            if (match && match[1]) {
+                const type = match[1];
+                if (criticalTypes.includes(type)) {
+                    hardBlockReason = `CRITICAL REJECT: Point is in/on ${type}`;
+                    break;
+                }
+            }
+        }
+
+        if (hardBlockReason) {
+             return {
+                sanity_check: {
+                    passed: false,
+                    fatal_error: hardBlockReason
+                },
+                board_meeting: {
+                    dev_director_opinion: "VETO: " + hardBlockReason,
+                    coo_opinion: "N/A",
+                    cfo_risk_analysis: "N/A",
+                    ceo_summary: "PROJECT TERMINATED IMMEDIATELY."
+                },
+                traffic_audit: {
+                    score: 0,
+                    traffic_class: "None",
+                    main_driver: "None"
+                },
+                financial_outlook: {
+                    investment_verdict: "Do Not Invest",
+                    risk_factors: [hardBlockReason]
+                },
+                final_verdict: {
+                    status: "HARD REJECT",
+                    recommendation: "Stop analysis. " + hardBlockReason
+                },
+                rawData: data
+            };
+        }
+
+        // 3. Generate Prompt (Board of Directors)
+        const systemPrompt = this.generateBoardMeetingPrompt(data);
+
+        // 4. Ask AI
         const aiResult = await this.askGeminiPro(systemPrompt, data);
 
         return {
@@ -154,6 +220,91 @@ class GeomarketingProService {
             totalScore: Math.min(score, 100),
             description: details.join(", ") || "Нет значимых генераторов"
         };
+    }
+
+    static generateBoardMeetingPrompt(data) {
+        const physical = data.osmData.physicalConstraints || [];
+        const negatives = data.osmData.negatives || [];
+        const barriers = data.osmData.barriers || [];
+        const pointFeatures = data.osmData.pointFeatures || [];
+
+        const constraints = physical.length > 0 ? physical.join(", ") : "Нет явных ограничений";
+        const negativeFactors = negatives.length > 0 ? negatives.join(", ") : "Нет";
+        const barrierInfo = barriers.length > 0 ? barriers.join(", ") : "Нет барьеров";
+        const pointInfo = pointFeatures.length > 0 ? pointFeatures.join(", ") : "Чисто";
+
+        const generatorsDesc = data.generators.description || "Нет данных";
+        const competitors = data.competitorTypes || "Нет данных";
+
+        return `
+ТЫ — ЭМУЛЯТОР СОВЕТА ДИРЕКТОРОВ МЕЖДУНАРОДНОЙ QSR СЕТИ (POPEYES).
+Твоя задача — провести жесткий, циничный и объективный аудит локации. Твоя цель — НЕ согласовать точку, а найти причины для отказа, чтобы спасти деньги компании. Согласование возможно только при идеальных условиях.
+
+ВХОДНЫЕ ДАННЫЕ:
+1. Координаты: ${data.lat}, ${data.lng}.
+2. Физические ограничения (0-15м): ${pointInfo} (Если здесь вода/трасса/кладбище — НЕМЕДЛЕННЫЙ ОТКАЗ).
+3. Плотность населения (Kontur): ${data.density} чел/га.
+4. Население в зоне охвата (500м): ~${data.estimatedPopulation} чел.
+5. Конкуренты: ${competitors}.
+6. Генераторы трафика (Школы, ВУЗы, ТЦ): ${generatorsDesc}.
+7. Барьеры (реки, ж/д): ${barrierInfo}.
+8. Окружение (100м): ${constraints}, ${negativeFactors}.
+
+СЦЕНАРИЙ АНАЛИЗА (Раунды обсуждения):
+
+РАУНД 1: Development Director (Технический аудит)
+- Анализ точки на карте. Если это лес, вода, трасса, пустырь — накладывается ВЕТО.
+- Оценка окружения: Промзона? Частный сектор (низкая плотность)?
+
+РАУНД 2: COO (Операционка и Трафик)
+- Анализ генераторов. ВУЗы и ТЦ — это плюс. Но если они через 6-полосную дорогу — трафика НЕТ.
+- Оценка "Пешеходной тропы". Реально ли люди здесь ходят?
+- Анализ конкурентов: Если их >5 — рынок есть. Если 0 — почему? (Мертвая зона?).
+
+РАУНД 3: CFO (Финансы и Риски)
+- Оценка "Сжигания денег". Высокий риск CAPEX (стройка в поле) или OPEX (аренда без трафика)?
+- Вердикт: "Money Pit" (Яма) или "Cash Cow" (Дойная корова).
+- Если плотность < 40 чел/га — КРИЧИ О РИСКАХ!
+
+РАУНД 4: CEO (Финальный вердикт)
+- Синтез мнений.
+- Итоговое решение.
+
+СИСТЕМА ОЦЕНКИ (SCORE 0-100):
+- 0: Непригодно (Вода, Лес, Трасса, Кладбище).
+- 1-30: Пустырь, Промзона, нет жилья, нет якорей.
+- 31-59: Спальный район без якорей, низкий трафик. Рискованно.
+- 60-79: Хороший стрит-ритейл, есть конкуренты, есть жилье. Рабочая лошадка.
+- 80-100: "Золотой угол". Метро + ТЦ + ВУЗ + Офисы + Плотность >150. Идеал.
+(Запрещено ставить >100. Будь скуп на баллы).
+
+ФОРМАТ ОТВЕТА (JSON ONLY):
+{
+  "sanity_check": {
+    "passed": boolean,
+    "fatal_error": "null или причина (напр. Точка в озере)"
+  },
+  "board_meeting": {
+    "dev_director_opinion": "...",
+    "coo_opinion": "...",
+    "cfo_risk_analysis": "...",
+    "ceo_summary": "..."
+  },
+  "traffic_audit": {
+    "score": 0-100,
+    "traffic_class": "Low / Medium / High / Ultra",
+    "main_driver": "Например: Студенты ВУЗа"
+  },
+  "financial_outlook": {
+    "investment_verdict": "High Risk / Invest / Do Not Invest",
+    "risk_factors": ["Риск 1", "Риск 2"]
+  },
+  "final_verdict": {
+    "status": "APPROVED / REJECT / HARD REJECT",
+    "recommendation": "Четкая инструкция команде..."
+  }
+}
+`;
     }
 
     static generateStrategyPrompt(data) {
