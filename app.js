@@ -499,6 +499,12 @@ async function getSurroundingData(lat, lon) {
 
         node(around:500, ${lat}, ${lon})["amenity"~"prison|grave_yard|waste_disposal|mortuary"];
         way(around:500, ${lat}, ${lon})["amenity"~"prison|grave_yard|waste_disposal|mortuary"];
+
+        node(around:100, ${lat}, ${lon})["natural"~"water|beach|wetland"];
+        way(around:100, ${lat}, ${lon})["natural"~"water|beach|wetland"];
+
+        node(around:100, ${lat}, ${lon})["landuse"~"forest"];
+        way(around:100, ${lat}, ${lon})["landuse"~"forest"];
       );
       out center;
     `;
@@ -552,6 +558,8 @@ function parseOverpassData(data, centerLat, centerLon) {
         competitors: [],
         anchors: [],
         negatives: [],
+        existingPopeyesPoints: [],
+        physicalConstraints: [],
         hasRedFlag: false,
         redFlagReason: null,
         lowDensity: false
@@ -590,10 +598,14 @@ function parseOverpassData(data, centerLat, centerLon) {
 
         // --- 2. Categorization ---
 
-        // Competitors
+        // Competitors & Own Brand
         if (['fast_food', 'cafe', 'restaurant', 'pub', 'bar', 'food_court', 'biergarten'].includes(tags.amenity)) {
             const name = tags.name || tags['name:ru'] || tags['name:en'] || 'Unnamed';
             summary.competitors.push(`${name} (${tags.amenity}) - ${Math.round(dist)}m`);
+
+            if (name && name.toLowerCase().includes('popeyes')) {
+                summary.existingPopeyesPoints.push(`${name} (${Math.round(dist)}m)`);
+            }
         }
 
         // Anchors
@@ -633,6 +645,7 @@ function parseOverpassData(data, centerLat, centerLon) {
         let isNegative = false;
         const negativeLanduse = ['cemetery', 'industrial', 'garages', 'landfill', 'brownfield'];
         const negativeAmenity = ['prison', 'grave_yard', 'waste_disposal', 'mortuary'];
+        const physicalBad = ['water', 'beach', 'wetland']; // natural
 
         if (negativeLanduse.includes(tags.landuse) || negativeAmenity.includes(tags.amenity)) {
             isNegative = true;
@@ -645,6 +658,17 @@ function parseOverpassData(data, centerLat, centerLon) {
                     summary.redFlagReason = `Обнаружен запретный объект: ${name} в радиусе ${Math.round(dist)}м`;
                 }
             }
+        }
+
+        // Physical Constraints (Water, Forest, etc)
+        if (physicalBad.includes(tags.natural) || tags.landuse === 'forest') {
+             const name = tags.name || tags.natural || tags.landuse;
+             summary.physicalConstraints.push(`${name} (${Math.round(dist)}m)`);
+
+             if (dist <= 50) {
+                 summary.hasRedFlag = true;
+                 summary.redFlagReason = `Локация непригодна: ${name} (вода/лес) в ${Math.round(dist)}м`;
+             }
         }
     });
 
@@ -868,18 +892,6 @@ map.on('click', (e) => {
                 <b>Координаты:</b> ${lat.toFixed(5)}, ${lng.toFixed(5)}
             </div>
 
-            <div class="popup-label">Тип локации:</div>
-            <select id="locationType" class="popup-select">
-                <option value="Спальный район">Спальный район</option>
-                <option value="Центр города">Центр города</option>
-                <option value="Трасса">Трасса</option>
-                <option value="Промзона">Промзона</option>
-                <option value="Пригород">Пригород</option>
-            </select>
-
-            <div class="popup-label">Трафик (чел/5мин):</div>
-            <input id="trafficLevel" type="number" class="popup-input" placeholder="0" min="0">
-
             <button id="btnRunAnalysis" class="primary-btn popup-btn">📊 Анализировать</button>
         </div>
     `;
@@ -897,12 +909,7 @@ map.on('popupopen', (e) => {
 
         btn.onclick = () => {
              if(latlng) {
-                 const typeEl = document.getElementById('locationType');
-                 const trafficEl = document.getElementById('trafficLevel');
-                 const typeVal = typeEl ? typeEl.value : 'Не указано';
-                 const trafficVal = trafficEl ? trafficEl.value : '0';
-
-                 runAnalysis(latlng, typeVal, trafficVal);
+                 runAnalysis(latlng);
                  map.closePopup();
              }
         };
@@ -923,8 +930,10 @@ async function getAddress(lat, lon) {
     }
 }
 
-async function runAnalysis(latlng, locationType, visualTraffic) {
+async function runAnalysis(latlng) {
     const { lat, lng } = latlng;
+    const locationType = "Авто-определение";
+    const visualTraffic = "Авто-определение";
 
     // UI Update
     document.getElementById('auditIntro').classList.add('hidden');
@@ -1085,7 +1094,13 @@ function renderProAuditResult(data) {
     const container = document.getElementById('auditResult');
     container.innerHTML = '';
 
-    const { traffic_score_audit, competitor_analysis, strategic_verdict, risk_factors, growth_potential } = data;
+    // 1. Sanity Check / Terrain Block
+    if (data.terrain_check === "Fail") {
+        renderHardBlockResult(`Локация непригодна (Sanity Check): ${data.strategic_verdict ? data.strategic_verdict.recommendation : 'Находится в запретной зоне (вода, лес, трасса)'}`);
+        return;
+    }
+
+    const { traffic_score_audit, competitor_analysis, strategic_verdict, risk_factors, growth_potential, cannibalization_analysis } = data;
     const { rawData } = data;
 
     // Competitors Table/List
@@ -1127,6 +1142,13 @@ function renderProAuditResult(data) {
             <div style="font-size: 1.1em; font-weight: bold; color: #ea580c; margin-bottom: 5px;">${strategic_verdict.status}</div>
             <div style="font-size: 0.95em; color: #9a3412; line-height:1.5;">${strategic_verdict.recommendation}</div>
         </div>
+
+        ${cannibalization_analysis ? `
+        <div style="background: #eff6ff; padding: 10px; border-radius: 6px; margin-bottom: 15px; border-left: 3px solid #3b82f6;">
+            <div style="color: #1e3a8a; font-weight: bold; font-size: 0.9em;">🍗 Стратегия Popeyes (Cannibalization):</div>
+            <div style="font-weight: bold; color: #1d4ed8;">${cannibalization_analysis.status}</div>
+            <div style="font-size: 0.85em; color: #1e40af;">${cannibalization_analysis.strategy}</div>
+        </div>` : ''}
 
         <div class="audit-section-title">⚔️ Анализ Конкурентов</div>
         <div style="margin-bottom:10px; font-size:0.9em; color:#334155;">${competitor_analysis.summary || ''}</div>

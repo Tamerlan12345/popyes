@@ -51,8 +51,8 @@ class GeomarketingProService {
         // 1. Gather Data (Tier 1, 2, 3)
         const data = await this.gatherData(lat, lng);
 
-        // 2. Generate Prompt
-        const systemPrompt = this.generateProPrompt(data);
+        // 2. Generate Prompt (New Strategy Director Mode)
+        const systemPrompt = this.generateStrategyPrompt(data);
 
         // 3. Ask AI
         const aiResult = await this.askGeminiPro(systemPrompt, data);
@@ -138,6 +138,77 @@ class GeomarketingProService {
         };
     }
 
+    static generateStrategyPrompt(data) {
+        const physical = data.osmData.physicalConstraints || [];
+        const negatives = data.osmData.negatives || [];
+        const combinedConstraints = [...physical, ...negatives];
+
+        const constraints = combinedConstraints.length > 0
+             ? combinedConstraints.join(", ")
+             : "Нет явных ограничений (вода/лес/кладбище)";
+
+        const existingPopeyes = data.osmData.existingPopeyesPoints && data.osmData.existingPopeyesPoints.length > 0
+             ? data.osmData.existingPopeyesPoints.join(", ")
+             : "Нет существующих точек Popeyes";
+
+        return `
+Ты — Директор по стратегии развития сети Popeyes (QSR). Твоя цель — агрессивный, но умный рост.
+Твоя задача: Принять решение о согласовании локации {${data.lat}, ${data.lng}}.
+
+ВХОДНЫЕ ДАННЫЕ:
+1. Физические ограничения и Негативные факторы: ${constraints}
+2. Существующие Popeyes (500м): ${existingPopeyes}
+3. Плотность населения (Kontur): ${data.density} чел/га.
+4. Генераторы трафика (Score: ${data.generators.totalScore}): ${data.generators.description}.
+5. Конкуренты: ${data.competitorTypes}.
+6. Инфраструктура: Жилье (${data.osmData.apartments.count} домов), Офисы (${data.osmData.offices}), Якоря (${data.osmData.anchors.length}).
+
+АЛГОРИТМ ПРИНЯТИЯ РЕШЕНИЯ:
+
+ШАГ 1: САНИТАРНАЯ ПРОВЕРКА (Sanity Check)
+Проверь "Физические ограничения". Если точка находится в воде (lake, river), на пляже без инфраструктуры, посреди трассы или на кладбище — немедленно ставь VERDICT: REJECT. Никакие соседние здания не имеют значения, если в самой точке нельзя строить.
+Верни результат в поле "terrain_check": "Pass" или "Fail".
+
+ШАГ 2: АНАЛИЗ КАННИБАЛИЗАЦИИ (Popeyes Strategy)
+Проанализируй список существующих точек Popeyes.
+- Если точка Popeyes ближе 500м: Это каннибализация или усиление кластера? Если это фудкорт в ТЦ, а новая точка — стрит-ритейл, это может быть допустимо. Если оба стрит-ритейл — высокий риск.
+- Если точек нет — это выход на новый рынок ("Greenfield").
+
+ШАГ 3: ОЦЕНКА ТРАФИКА (Traffic Inference)
+Пользователь не ввел данные о трафике. Ты должен вывести оценку (Low/Medium/High) на основе:
+- Плотности (Density > 80 = High Potential).
+- Наличия ВУЗов/Офисов/ТЦ.
+- Метро рядом.
+Пример: "Высокая плотность + Метро = High Traffic".
+
+ВЕРНИ ТОЛЬКО JSON (строго соблюдай структуру):
+{
+  "terrain_check": "Pass/Fail",
+  "cannibalization_analysis": {
+      "status": "Cannibalization Risk / Cluster Growth / Greenfield",
+      "strategy": "Твоя аргументация стратега..."
+  },
+  "traffic_score_audit": {
+    "score": 0-100,
+    "comment": "Твоя оценка трафика и генераторов..."
+  },
+  "competitor_analysis": {
+    "list": [
+      {"name": "Competitor Name", "dist": "120m", "type": "fast_food", "risk": "High"}
+    ],
+    "cannibalization_risk": "High/Medium/Low",
+    "summary": "Вывод по конкуренции..."
+  },
+  "strategic_verdict": {
+    "status": "High Potential / Risky / No Go",
+    "recommendation": "Финальное решение директора..."
+  },
+  "risk_factors": ["Риск 1", "Риск 2"],
+  "growth_potential": "За счет чего будет рост..."
+}
+`;
+    }
+
     static generateProPrompt(data) {
         return `
 Ты — Инвестиционный Аналитик и Эксперт по Геомаркетингу (DataHunters Methodology).
@@ -217,9 +288,17 @@ class GeomarketingProService {
         // Extract JSON
         const firstBrace = text.indexOf('{');
         const lastBrace = text.lastIndexOf('}');
+
+        if (firstBrace === -1) throw new Error("No JSON in AI response");
+
         const jsonString = text.substring(firstBrace, lastBrace + 1);
 
-        return JSON.parse(jsonString);
+        try {
+            return JSON.parse(jsonString);
+        } catch (e) {
+            console.error("JSON Parse Error:", jsonString);
+            throw new Error("AI returned invalid JSON");
+        }
     }
 }
 
