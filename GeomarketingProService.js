@@ -353,7 +353,7 @@ class GeomarketingProService {
     }
 
     static async askGeminiPro(data, promptType) {
-        const url = `/api/analyze-location`;
+        const url = `/api/analyze`;
 
         const payload = {
             data: data,
