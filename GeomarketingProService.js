@@ -277,6 +277,167 @@ class GeomarketingProService {
         return Math.min(score, 100);
     }
 
+    // ---- AI Search Module ----
+
+    static async scanArea(lat, lng, radius) {
+        console.log(`Scanning area: ${lat}, ${lng}, r=${radius}`);
+
+        // 1. Validation (Geo-Fence: Almaty)
+        const ALMATY_CENTER = { lat: 43.238949, lng: 76.889709 };
+        const distFromCityCenter = this.calculateDistance(lat, lng, ALMATY_CENTER.lat, ALMATY_CENTER.lng);
+
+        if (distFromCityCenter > 25) {
+            throw new Error("Поиск работает только внутри границ Алматы (Geo-Fence).");
+        }
+
+        // 2. Candidate Sourcing
+        const data = await this.fetchCandidates(lat, lng, radius);
+        if (!data || !data.elements || data.elements.length === 0) {
+            throw new Error("В этой зоне не найдено значимых объектов (ТЦ, ВУЗы, Офисы).");
+        }
+
+        // 3. Processing
+        const candidates = this.processCandidates(data.elements);
+        if (candidates.length === 0) {
+             throw new Error("Нет подходящих кандидатов после фильтрации.");
+        }
+
+        console.log(`Found ${candidates.length} unique candidates. Analyzing Top 5...`);
+
+        // 4. Deep Analysis (Mirror Logic)
+        const reports = [];
+        // Limit to Top 5
+        const topCandidates = candidates.slice(0, 5);
+
+        for (const cand of topCandidates) {
+            try {
+                // Call the EXACT same function as manual click
+                const report = await this.runPopeyesAudit(cand.lat, cand.lon, lat, lng);
+                report.candidateName = cand.name;
+                report.candidateType = cand.type;
+                report.coords = { lat: cand.lat, lng: cand.lon };
+                reports.push(report);
+            } catch (e) {
+                console.warn(`Failed to audit candidate ${cand.name}`, e);
+            }
+        }
+
+        if (reports.length === 0) throw new Error("Анализ кандидатов не удался.");
+
+        // 5. Winner Selection
+        // Sort by Score DESC, then Population DESC
+        reports.sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+            return (b.metrics.real_population_500m || 0) - (a.metrics.real_population_500m || 0);
+        });
+
+        const winner = reports[0];
+        console.log("Winner:", winner);
+        return winner;
+    }
+
+    static calculateDistance(lat1, lon1, lat2, lon2) {
+        const R = 6371;
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                  Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                  Math.sin(dLon/2) * Math.sin(dLon/2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        return R * c;
+    }
+
+    static async fetchCandidates(lat, lng, radius) {
+        // Query for anchors
+        const query = `
+            [out:json][timeout:25];
+            (
+              node(around:${radius}, ${lat}, ${lng})["shop"~"mall|supermarket|marketplace"];
+              way(around:${radius}, ${lat}, ${lng})["shop"~"mall|supermarket|marketplace"];
+
+              node(around:${radius}, ${lat}, ${lng})["amenity"~"university|college"];
+              way(around:${radius}, ${lat}, ${lng})["amenity"~"university|college"];
+
+              node(around:${radius}, ${lat}, ${lng})["railway"="subway_entrance"];
+
+              node(around:${radius}, ${lat}, ${lng})["amenity"="fast_food"];
+
+              node(around:${radius}, ${lat}, ${lng})["office"];
+              way(around:${radius}, ${lat}, ${lng})["office"];
+            );
+            out center;
+        `;
+
+        if (typeof _executeOverpassQuery === 'function') {
+            return _executeOverpassQuery(query, "CandidateScan");
+        } else {
+            throw new Error("Internal Error: Overpass connector missing.");
+        }
+    }
+
+    static processCandidates(elements) {
+        const candidates = [];
+
+        elements.forEach(el => {
+            const tags = el.tags || {};
+            let lat = el.lat;
+            let lon = el.lon;
+            if (!lat && el.center) {
+                lat = el.center.lat;
+                lon = el.center.lon;
+            }
+            if (!lat || !lon) return;
+
+            let type = 'unknown';
+            let priority = 99;
+            let name = tags.name || tags['name:ru'] || tags['name:en'] || 'Unknown';
+
+            if (tags.shop && ['mall', 'supermarket', 'marketplace'].includes(tags.shop)) {
+                type = 'Mall';
+                priority = 1;
+            } else if (tags.amenity && ['university', 'college'].includes(tags.amenity)) {
+                type = 'University';
+                priority = 2;
+            } else if (tags.railway === 'subway_entrance') {
+                type = 'Metro';
+                priority = 3;
+                name = tags.name || 'Metro Station';
+            } else if (tags.office) {
+                type = 'Office';
+                priority = 4;
+            } else if (tags.amenity === 'fast_food') {
+                type = 'FastFood';
+                priority = 5;
+            }
+
+            if (type !== 'unknown') {
+                candidates.push({ lat, lon, type, priority, name });
+            }
+        });
+
+        // Sort by Priority (ASC)
+        candidates.sort((a, b) => a.priority - b.priority);
+
+        // Deduplicate (Space out by 200m)
+        const selected = [];
+        for (const cand of candidates) {
+            let isTooClose = false;
+            for (const s of selected) {
+                const dist = this.calculateDistance(cand.lat, cand.lon, s.lat, s.lon); // returns km
+                if (dist * 1000 < 200) { // 200m
+                    isTooClose = true;
+                    break;
+                }
+            }
+            if (!isTooClose) {
+                selected.push(cand);
+            }
+            if (selected.length >= 20) break;
+        }
+
+        return selected;
+    }
+
     static async gatherData(lat, lng, centerLat, centerLng) {
         // Tier 1: Density
         const density = HexagonDataService.getDensity(lat, lng, centerLat, centerLng);
