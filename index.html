@@ -38,6 +38,7 @@
         <div class="panel-tabs">
             <button id="tabEarthquakes" class="tab-btn active">Землетрясения</button>
             <button id="tabAudit" class="tab-btn">Smart Location</button>
+            <button id="tabAutoSource" class="tab-btn">🔍 Поиск</button>
         </div>
 
         <div id="contentEarthquakes">
@@ -68,6 +69,30 @@
 
                 <div id="auditResult" class="hidden">
                     </div>
+             </section>
+        </div>
+
+        <div id="contentAutoSource" class="hidden">
+             <section class="section">
+                <h3>Авто-поиск локации</h3>
+                <div id="autoSourceIntro">
+                    <p style="font-size: 0.9em; color: #555;">
+                        Область поиска: Текущий экран.<br>
+                        Найдем лучшие точки для открытия (ТЦ, ВУЗы, Метро).
+                    </p>
+                    <button id="btnStartAutoSource" class="primary-btn">🚀 Найти лучшую точку</button>
+                </div>
+
+                <div id="autoSourceLoading" class="hidden" style="text-align: center; padding: 20px;">
+                    <div class="spinner"></div>
+                    <p id="autoSourceStatusText">Сканирование территории...</p>
+                    <div style="width: 100%; background: #e9ecef; border-radius: 4px; height: 8px; margin-top: 10px;">
+                        <div id="autoSourceProgressBar" style="width: 0%; height: 100%; background: #0d6efd; border-radius: 4px; transition: width 0.3s;"></div>
+                    </div>
+                </div>
+
+                <div id="autoSourceResult" class="hidden">
+                </div>
              </section>
         </div>
       </aside>
