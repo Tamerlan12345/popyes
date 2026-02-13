@@ -375,6 +375,133 @@ class GeomarketingProService {
             throw e;
         }
     }
+
+    static async findBestLocationsInBounds(bounds) {
+        console.log("Auto-Sourcing: Scanning bounds:", bounds);
+        const south = bounds.getSouth();
+        const west = bounds.getWest();
+        const north = bounds.getNorth();
+        const east = bounds.getEast();
+
+        // 1. Scan for Anchors (Mall, Uni, Metro)
+        // We only fetch centroids (out center) to be light
+        const query = `
+          [out:json][timeout:25];
+          (
+            node["shop"="mall"](${south},${west},${north},${east});
+            way["shop"="mall"](${south},${west},${north},${east});
+            relation["shop"="mall"](${south},${west},${north},${east});
+
+            node["amenity"="university"](${south},${west},${north},${east});
+            way["amenity"="university"](${south},${west},${north},${east});
+            relation["amenity"="university"](${south},${west},${north},${east});
+
+            node["station"="subway"](${south},${west},${north},${east});
+            node["railway"="subway_entrance"](${south},${west},${north},${east});
+          );
+          out center;
+        `;
+
+        // Local list of servers to avoid external dependency issues
+        const SERVERS = [
+            'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+            'https://overpass.kumi.systems/api/interpreter',
+            'https://overpass-api.de/api/interpreter'
+        ];
+
+        let data = null;
+        for (const url of SERVERS) {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    body: query,
+                    signal: controller.signal
+                });
+
+                clearTimeout(timeoutId);
+
+                if (response.ok) {
+                    data = await response.json();
+                    break;
+                }
+            } catch (e) {
+                console.warn("Auto-Sourcing: Overpass fetch failed", e);
+            }
+        }
+
+        if (!data || !data.elements) {
+            console.warn("Auto-Sourcing: No data returned from Overpass");
+            return [];
+        }
+
+        // 2. Process Candidates
+        let candidates = [];
+        data.elements.forEach(el => {
+            const lat = el.lat || (el.center ? el.center.lat : null);
+            const lon = el.lon || (el.center ? el.center.lon : null);
+            if (!lat || !lon) return;
+
+            const tags = el.tags || {};
+            let type = 'unknown';
+            let score = 0; // Priority Score for Selection
+
+            if (tags.shop === 'mall') {
+                type = 'Торговый Центр';
+                score = 3;
+            } else if (tags.amenity === 'university') {
+                type = 'Университет';
+                score = 2;
+            } else if (tags.station === 'subway' || tags.railway === 'subway_entrance') {
+                type = 'Метро';
+                score = 1;
+            }
+
+            const name = tags.name || tags['name:ru'] || tags['name:en'] || "Без названия";
+
+            candidates.push({ lat, lng: lon, type, name, score });
+        });
+
+        // 3. Sort by Importance
+        candidates.sort((a, b) => b.score - a.score);
+
+        // 4. Deduplicate & Limit to Top 3
+        const finalCandidates = [];
+
+        // Helper distance function (Haversine)
+        const getDist = (lat1, lon1, lat2, lon2) => {
+            const R = 6371;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c; // km
+        };
+
+        for (const c of candidates) {
+            let isTooClose = false;
+            for (const existing of finalCandidates) {
+                const d = getDist(c.lat, c.lng, existing.lat, existing.lng);
+                if (d < 0.2) { // 200m
+                    isTooClose = true;
+                    break;
+                }
+            }
+
+            if (!isTooClose) {
+                finalCandidates.push(c);
+            }
+
+            if (finalCandidates.length >= 3) break;
+        }
+
+        console.log("Auto-Sourcing: Candidates found:", finalCandidates);
+        return finalCandidates;
+    }
 }
 
 // Expose to window
