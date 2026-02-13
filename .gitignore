@@ -1,3 +1,5 @@
-# Игнорировать локальный файл конфигурации с учетными данными
-config.js
+node_modules
 .env
+node_modules
+.env
+server.log

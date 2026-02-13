@@ -1196,6 +1196,7 @@ async function getAddress(lat, lon) {
 
 async function runAnalysis(latlng) {
     const { lat, lng } = latlng;
+    const center = map.getCenter();
 
     // UI Update
     document.getElementById('auditIntro').classList.add('hidden');
@@ -1208,7 +1209,7 @@ async function runAnalysis(latlng) {
         }
 
         // Always run Popeyes Audit
-        const proResult = await GeomarketingProService.runPopeyesAudit(lat, lng);
+        const proResult = await GeomarketingProService.runPopeyesAudit(lat, lng, center.lat, center.lng);
 
         renderProAuditResult(proResult);
 
