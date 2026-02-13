@@ -192,29 +192,6 @@ app.post('/api/analyze', async (req, res) => {
         return res.status(500).json({ error: "Server misconfiguration: API Key missing" });
     }
 
-    if (apiKey === 'mock') {
-        console.log("Using Mock AI Response");
-        await new Promise(r => setTimeout(r, 1000)); // Simulate delay
-        return res.json({
-            verdict_title: "MOCK: High Potential",
-            proof_points: ["Mock Point 1", "Mock Point 2"],
-            recommendation: "MOCK: Open immediately.",
-            risk_factors: ["Mock Risk 1"],
-            executive_summary: "MOCK: GO. This is a simulated response.",
-            c_level_debate: {
-                COO_opinion: "MOCK: Logistics look good.",
-                CFO_opinion: "MOCK: Financials are solid."
-            },
-            marketing_5p: {
-                place_audit: "Good place",
-                people_audit: "Good people",
-                product_fit: "Good fit",
-                price_potential: "Good price",
-                promotion_strategy: "Good promo"
-            }
-        });
-    }
-
     let systemInstruction = "";
     let dataSummary = "";
 
