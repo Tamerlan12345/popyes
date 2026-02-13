@@ -302,12 +302,12 @@ class GeomarketingProService {
              throw new Error("Нет подходящих кандидатов после фильтрации.");
         }
 
-        console.log(`Found ${candidates.length} unique candidates. Analyzing Top 5...`);
+        console.log(`Found ${candidates.length} unique candidates. Analyzing Top 3...`);
 
         // 4. Deep Analysis (Mirror Logic)
         const reports = [];
-        // Limit to Top 5
-        const topCandidates = candidates.slice(0, 5);
+        // Limit to Top 3 (as per Evidence-Based Logic requirements)
+        const topCandidates = candidates.slice(0, 3);
 
         for (const cand of topCandidates) {
             try {

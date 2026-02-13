@@ -1350,6 +1350,7 @@ function renderHardBlockResult(reason, containerId = 'auditResult') {
 // ---- Search Mode Logic ----
 let searchModeEnabled = false;
 let searchCircle = null;
+let searchResultMarker = null; // New variable for the result pin
 const searchRadiusInput = document.getElementById('searchRadiusInput');
 const searchRadiusValue = document.getElementById('searchRadiusValue');
 
@@ -1440,6 +1441,23 @@ async function runAreaScan() {
         }
 
         const result = await GeomarketingProService.scanArea(center.lat, center.lng, radius);
+
+        disableSearchMode(); // Stop circle updates and hide it
+
+        // Place Result Pin
+        if (searchResultMarker) map.removeLayer(searchResultMarker);
+
+        const icon = L.divIcon({
+          className: 'custom-pin',
+          html: `<div style="background-color: #f59e0b; width: 24px; height: 24px; border-radius: 50%; border: 3px solid white; box-shadow: 0 4px 6px rgba(0,0,0,0.3);"></div>`,
+          iconSize: [24, 24],
+          iconAnchor: [12, 12]
+        });
+
+        if (result.coords) {
+             searchResultMarker = L.marker([result.coords.lat, result.coords.lng], { icon: icon }).addTo(map);
+             map.flyTo([result.coords.lat, result.coords.lng], 16, { duration: 1.5 });
+        }
 
         renderProAuditResult(result, 'searchResult');
 
@@ -1647,6 +1665,16 @@ function renderProAuditResult(data, containerId = 'auditResult') {
             const introId = containerId === 'auditResult' ? 'auditIntro' : 'searchIntro';
             const intro = document.getElementById(introId);
             if (intro) intro.classList.remove('hidden');
+
+            // Specific Reset Logic for Search Mode
+            if (containerId === 'searchResult') {
+                if (searchResultMarker) {
+                    map.removeLayer(searchResultMarker);
+                    searchResultMarker = null;
+                }
+                enableSearchMode(); // Reactivate circle and listeners
+                map.setZoom(14);
+            }
         });
     }
 }
