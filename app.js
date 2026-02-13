@@ -1081,183 +1081,27 @@ async function askGemini(summaryData, lat, lon, address, locationType, visualTra
 
 const tabEarthquakes = document.getElementById('tabEarthquakes');
 const tabAudit = document.getElementById('tabAudit');
-const tabSearch = document.getElementById('tabSearch');
 const contentEarthquakes = document.getElementById('contentEarthquakes');
 const contentAudit = document.getElementById('contentAudit');
-const contentSearch = document.getElementById('contentSearch');
 
 function switchTab(tab) {
-    // Reset all
-    if (tabEarthquakes) tabEarthquakes.classList.remove('active');
-    if (tabAudit) tabAudit.classList.remove('active');
-    if (tabSearch) tabSearch.classList.remove('active');
-
-    if (contentEarthquakes) contentEarthquakes.classList.add('hidden');
-    if (contentAudit) contentAudit.classList.add('hidden');
-    if (contentSearch) contentSearch.classList.add('hidden');
-
-    disableAuditMode();
-
     if (tab === 'earthquakes') {
-        if (tabEarthquakes) tabEarthquakes.classList.add('active');
-        if (contentEarthquakes) contentEarthquakes.classList.remove('hidden');
-    } else if (tab === 'audit') {
-        if (tabAudit) tabAudit.classList.add('active');
-        if (contentAudit) contentAudit.classList.remove('hidden');
-    } else if (tab === 'search') {
-        if (tabSearch) tabSearch.classList.add('active');
-        if (contentSearch) contentSearch.classList.remove('hidden');
+        tabEarthquakes.classList.add('active');
+        tabAudit.classList.remove('active');
+        contentEarthquakes.classList.remove('hidden');
+        contentAudit.classList.add('hidden');
+        disableAuditMode();
+    } else {
+        tabEarthquakes.classList.remove('active');
+        tabAudit.classList.add('active');
+        contentEarthquakes.classList.add('hidden');
+        contentAudit.classList.remove('hidden');
     }
 }
 
 if (tabEarthquakes && tabAudit) {
     tabEarthquakes.addEventListener('click', () => switchTab('earthquakes'));
     tabAudit.addEventListener('click', () => switchTab('audit'));
-}
-if (tabSearch) {
-    tabSearch.addEventListener('click', () => switchTab('search'));
-}
-
-// --- Smart Sourcing Logic ---
-const btnFindLocation = document.getElementById('btnFindLocation');
-if (btnFindLocation) {
-    btnFindLocation.addEventListener('click', handleFindLocation);
-}
-
-async function handleFindLocation() {
-    const center = map.getCenter();
-    // Almaty Bounds: Lat: 43.10 - 43.45, Lng: 76.70 - 77.15
-    const inAlmaty = center.lat >= 43.10 && center.lat <= 43.45 &&
-                     center.lng >= 76.70 && center.lng <= 77.15;
-
-    if (!inAlmaty) {
-        alert("Функция доступна только для г. Алматы");
-        return;
-    }
-
-    const bounds = map.getBounds();
-    const loadingEl = document.getElementById('searchLoading');
-    const resultEl = document.getElementById('searchResult');
-    const introEl = document.getElementById('searchIntro');
-
-    introEl.classList.add('hidden');
-    resultEl.classList.add('hidden');
-    loadingEl.classList.remove('hidden');
-
-    try {
-        if (typeof GeomarketingProService === 'undefined') {
-            throw new Error("Service not loaded");
-        }
-
-        const candidates = await GeomarketingProService.findBestLocationsInBounds(bounds);
-        if (candidates.length === 0) {
-            alert("В видимой области не найдено подходящих магнитов (ТЦ, ВУЗы, Метро).");
-            introEl.classList.remove('hidden');
-            loadingEl.classList.add('hidden');
-            return;
-        }
-
-        // Limit to top 3
-        const topCandidates = candidates.slice(0, 3);
-        let bestCandidate = null;
-        let bestScore = -1;
-
-        // Run Audit for each
-        // Use sequential execution to respect API rate limits/stability
-        for (const cand of topCandidates) {
-             try {
-                const report = await GeomarketingProService.runPopeyesAudit(cand.lat, cand.lng, center.lat, center.lng);
-                cand.report = report; // Attach report
-
-                // Simple Logic: Pick highest score
-                if (report.score > bestScore) {
-                    bestScore = report.score;
-                    bestCandidate = cand;
-                } else if (report.score === bestScore) {
-                    // Tie-breaker: "GO" verdict
-                    if (report.executive_summary && report.executive_summary.includes('GO')) {
-                        bestScore = report.score;
-                        bestCandidate = cand;
-                    }
-                }
-             } catch (err) {
-                 console.warn(`Failed to audit candidate ${cand.name}`, err);
-             }
-        }
-
-        if (bestCandidate) {
-            renderBestLocationFullReport(bestCandidate);
-        } else {
-            alert("Не удалось провести анализ кандидатов.");
-            introEl.classList.remove('hidden');
-        }
-
-    } catch (e) {
-        console.error(e);
-        alert("Ошибка поиска: " + e.message);
-        introEl.classList.remove('hidden');
-    } finally {
-        loadingEl.classList.add('hidden');
-    }
-}
-
-function renderBestLocationFullReport(candidate) {
-    const container = document.getElementById('searchResult');
-    const data = candidate.report;
-    const reportName = candidate.name;
-    const reportType = candidate.type;
-
-    let colorClass = '#3b82f6'; // Blue
-    if (data.score >= 80) colorClass = '#22c55e'; // Green
-    if (data.score < 50) colorClass = '#ef4444'; // Red
-
-    const html = `
-        <div style="background: white; border-radius: 12px; border: 1px solid #e2e8f0; overflow: hidden;">
-            <div style="background: ${colorClass}; color: white; padding: 15px;">
-                <div style="font-size: 0.8rem; text-transform: uppercase; opacity: 0.9;">${reportType}</div>
-                <div style="font-size: 1.2rem; font-weight: bold;">${reportName}</div>
-                <div style="margin-top: 10px; font-size: 2.5rem; font-weight: 800;">${data.score}/100</div>
-            </div>
-
-            <div style="padding: 15px;">
-                <button class="primary-btn" id="btnShowWinnerMap" style="width:100%; margin-bottom: 15px;">👀 Показать на карте</button>
-
-                <div class="audit-section-title">👔 Мнение Совета Директоров</div>
-                ${data.c_level_debate ? `
-                <div style="font-size: 0.9em; margin-bottom: 10px;">
-                    <div style="margin-bottom: 8px;"><b>COO:</b> "${data.c_level_debate.COO_opinion}"</div>
-                    <div><b>CFO:</b> "${data.c_level_debate.CFO_opinion}"</div>
-                </div>` : 'Нет данных'}
-
-                <div class="audit-section-title">📊 Маркетинг 5P</div>
-                ${data.marketing_5p ? `
-                <div style="font-size: 0.85em; background: #f8fafc; padding: 10px; border-radius: 8px;">
-                     <div><b>Product:</b> ${data.marketing_5p.product_fit}</div>
-                     <div style="margin-top:5px;"><b>Place:</b> ${data.marketing_5p.place_audit}</div>
-                     <div style="margin-top:5px;"><b>Price:</b> ${data.marketing_5p.price_potential}</div>
-                </div>` : 'Нет данных'}
-
-                <div style="margin-top: 15px; padding: 12px; background: #ecfdf5; border-radius: 8px; border: 1px solid #10b981;">
-                    <div style="color: #047857; font-weight: bold; font-size: 0.9em;">🏆 Вердикт:</div>
-                    <div style="font-size: 0.9em; color: #065f46;">${data.executive_summary}</div>
-                </div>
-            </div>
-        </div>
-        <button id="btnResetSearch" class="primary-btn" style="margin-top: 15px; background-color: #6c757d;">🔄 Новый поиск</button>
-    `;
-
-    container.innerHTML = html;
-    container.classList.remove('hidden');
-
-    document.getElementById('btnResetSearch').addEventListener('click', () => {
-        container.classList.add('hidden');
-        document.getElementById('searchIntro').classList.remove('hidden');
-    });
-
-    document.getElementById('btnShowWinnerMap').addEventListener('click', () => {
-        map.flyTo([candidate.lat, candidate.lng], 16);
-        L.marker([candidate.lat, candidate.lng]).addTo(map).bindPopup('<b>Победитель!</b><br>' + reportName).openPopup();
-    });
 }
 
 let auditModeEnabled = false;
