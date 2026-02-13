@@ -1,12 +1,16 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const fetch = require('node-fetch'); // Import node-fetch as requested
 
 const app = express();
-const PORT = 3000; // Internal port for Caddy reverse proxy
+const PORT = 3000;
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+
+// Serve static files from the root directory
+app.use(express.static('.'));
 
 // --- Helper Functions to Format Data for AI ---
 
@@ -178,11 +182,12 @@ function getStrategySystemInstruction(data) {
 
 // --- API Endpoint ---
 
-app.post('/api/analyze-location', async (req, res) => {
+app.post('/api/analyze', async (req, res) => {
     const { data, promptType } = req.body;
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
+        console.error("Server misconfiguration: API Key missing in environment variables");
         return res.status(500).json({ error: "Server misconfiguration: API Key missing" });
     }
 
@@ -248,5 +253,5 @@ app.post('/api/analyze-location', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`Server is running on http://localhost:${PORT}`);
 });
