@@ -15,6 +15,15 @@ EOF
 
 echo "config.js generated successfully."
 
+echo "Installing Node dependencies..."
+npm install
+
+echo "Starting Backend Server..."
+node server.js &
+
+# Wait for backend to start (simple sleep)
+sleep 2
+
 # ИЗМЕНЕНИЕ:
 # Запускаем Caddy с помощью 'caddy run',
 # который автоматически найдет и использует Caddyfile
