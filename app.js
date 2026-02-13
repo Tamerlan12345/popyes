@@ -1081,62 +1081,31 @@ async function askGemini(summaryData, lat, lon, address, locationType, visualTra
 
 const tabEarthquakes = document.getElementById('tabEarthquakes');
 const tabAudit = document.getElementById('tabAudit');
-const tabAutoSource = document.getElementById('tabAutoSource');
-
 const contentEarthquakes = document.getElementById('contentEarthquakes');
 const contentAudit = document.getElementById('contentAudit');
-const contentAutoSource = document.getElementById('contentAutoSource');
-
-const btnStartAutoSource = document.getElementById('btnStartAutoSource');
-const autoSourceLoading = document.getElementById('autoSourceLoading');
-const autoSourceResult = document.getElementById('autoSourceResult');
-const autoSourceStatusText = document.getElementById('autoSourceStatusText');
-const autoSourceProgressBar = document.getElementById('autoSourceProgressBar');
-
 
 function switchTab(tab) {
-    // Reset all
-    tabEarthquakes.classList.remove('active');
-    tabAudit.classList.remove('active');
-    if (tabAutoSource) tabAutoSource.classList.remove('active');
-
-    contentEarthquakes.classList.add('hidden');
-    contentAudit.classList.add('hidden');
-    if (contentAutoSource) contentAutoSource.classList.add('hidden');
-
-    disableAuditMode();
-
-    // Clear auto-source marker if switching away
-    if (tab !== 'autosource' && autoSourceMarker) {
-        map.removeLayer(autoSourceMarker);
-        autoSourceMarker = null;
-    }
-
     if (tab === 'earthquakes') {
         tabEarthquakes.classList.add('active');
+        tabAudit.classList.remove('active');
         contentEarthquakes.classList.remove('hidden');
-    } else if (tab === 'audit') {
+        contentAudit.classList.add('hidden');
+        disableAuditMode();
+    } else {
+        tabEarthquakes.classList.remove('active');
         tabAudit.classList.add('active');
+        contentEarthquakes.classList.add('hidden');
         contentAudit.classList.remove('hidden');
-    } else if (tab === 'autosource') {
-        if (tabAutoSource) tabAutoSource.classList.add('active');
-        if (contentAutoSource) contentAutoSource.classList.remove('hidden');
     }
 }
 
 if (tabEarthquakes && tabAudit) {
     tabEarthquakes.addEventListener('click', () => switchTab('earthquakes'));
     tabAudit.addEventListener('click', () => switchTab('audit'));
-    if (tabAutoSource) tabAutoSource.addEventListener('click', () => switchTab('autosource'));
-}
-
-if (btnStartAutoSource) {
-    btnStartAutoSource.addEventListener('click', runAutoSourcing);
 }
 
 let auditModeEnabled = false;
 let auditMarker = null;
-let autoSourceMarker = null;
 
 const btnToggleAudit = document.getElementById('btnToggleAudit');
 
@@ -1546,223 +1515,6 @@ function renderProAuditResult(data) {
         btnReset.addEventListener('click', () => {
             container.classList.add('hidden');
             document.getElementById('auditIntro').classList.remove('hidden');
-        });
-    }
-}
-
-async function runAutoSourcing() {
-    const introEl = document.getElementById('autoSourceIntro');
-    const resultEl = document.getElementById('autoSourceResult');
-    const loadingEl = document.getElementById('autoSourceLoading');
-    const statusText = document.getElementById('autoSourceStatusText');
-    const progressBar = document.getElementById('autoSourceProgressBar');
-
-    // 1. UI Reset
-    introEl.classList.add('hidden');
-    resultEl.classList.add('hidden');
-    loadingEl.classList.remove('hidden');
-
-    if (autoSourceMarker) {
-        map.removeLayer(autoSourceMarker);
-        autoSourceMarker = null;
-    }
-
-    statusText.innerText = "Сканирование территории (Overpass API)...";
-    progressBar.style.width = "10%";
-
-    try {
-        // 2. Get Candidates
-        const bounds = map.getBounds();
-        const candidates = await GeomarketingProService.findBestLocationsInBounds(bounds);
-
-        if (!candidates || candidates.length === 0) {
-            throw new Error("В этой области не найдено подходящих объектов (ТЦ, ВУЗы, Метро).");
-        }
-
-        progressBar.style.width = "30%";
-        statusText.innerText = `Найдено ${candidates.length} кандидатов. Выбор лучших...`;
-
-        // 3. Batch Analysis
-        let bestCandidate = null;
-        let maxScore = -1;
-        let results = [];
-
-        // Limit to top 3 to avoid limits
-        const topCandidates = candidates.slice(0, 3);
-        const total = topCandidates.length;
-        const mapCenter = map.getCenter(); // Use current center as reference for density model
-
-        for (let i = 0; i < total; i++) {
-            const cand = topCandidates[i];
-            const pct = 30 + Math.round(((i + 1) / total) * 60);
-            progressBar.style.width = `${pct}%`;
-            statusText.innerText = `Анализ точки ${i + 1} из ${total}: ${cand.name}...`;
-
-            try {
-                // Run Full Audit
-                const result = await GeomarketingProService.runPopeyesAudit(cand.lat, cand.lng, mapCenter.lat, mapCenter.lng);
-
-                // Augment result with candidate info
-                result.candidateInfo = cand;
-                results.push(result);
-
-                // Check for hard reject
-                if (result.isHardReject) {
-                    console.log(`Candidate ${cand.name} rejected: ${result.rejectReason}`);
-                    continue;
-                }
-
-                if (result.score > maxScore) {
-                    maxScore = result.score;
-                    bestCandidate = result;
-                }
-
-            } catch (err) {
-                console.warn(`Failed to audit ${cand.name}`, err);
-            }
-        }
-
-        if (!bestCandidate) {
-             throw new Error("Все кандидаты были отклоне или анализ не удался.");
-        }
-
-        // 4. Finalize
-        progressBar.style.width = "100%";
-        statusText.innerText = "Готово!";
-
-        // Fly to winner
-        map.flyTo([bestCandidate.candidateInfo.lat, bestCandidate.candidateInfo.lng], 16, {
-            animate: true,
-            duration: 1.5
-        });
-
-        // Add specific marker for winner
-        autoSourceMarker = L.marker([bestCandidate.candidateInfo.lat, bestCandidate.candidateInfo.lng], {
-            icon: L.divIcon({
-                className: 'winner-icon',
-                html: `<div style="font-size:30px; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">🏆</div>`,
-                iconSize: [40, 40],
-                iconAnchor: [20, 20]
-            })
-        }).addTo(map);
-
-        autoSourceMarker.bindPopup(`
-            <div style="text-align:center;">
-                <b>🏆 ПОБЕДИТЕЛЬ</b><br>
-                ${bestCandidate.candidateInfo.name}<br>
-                <span style="font-size:1.2em; font-weight:bold; color:#166534;">Score: ${bestCandidate.score}</span>
-            </div>
-        `).openPopup();
-
-        // Render Result
-        renderAutoSourceResult(bestCandidate);
-
-    } catch (e) {
-        console.error(e);
-        statusText.innerText = "Ошибка!";
-        alert(e.message);
-        introEl.classList.remove('hidden');
-    } finally {
-        loadingEl.classList.add('hidden');
-    }
-}
-
-function renderAutoSourceResult(data) {
-    const container = document.getElementById('autoSourceResult');
-    container.innerHTML = '';
-
-    // Determine Color Class
-    let colorClass = 'score-yellow';
-    let bgColor = '#fef08a';
-    let textColor = '#854d0e';
-
-    if (data.score >= 70) {
-        colorClass = 'score-green';
-        bgColor = '#bbf7d0';
-        textColor = '#166534';
-    } else if (data.score < 40) {
-        colorClass = 'score-red';
-        bgColor = '#fecaca';
-        textColor = '#991b1b';
-    }
-
-    const metrics = data.metrics || {};
-    const proofPoints = data.proof_points || [];
-    const risks = data.risk_factors || [];
-    const candName = data.candidateInfo ? data.candidateInfo.name : "Локация";
-    const candType = data.candidateInfo ? data.candidateInfo.type : "";
-
-    const html = `
-        <div class="audit-dashboard" style="font-family: 'Inter', sans-serif;">
-
-            <div style="margin-bottom:15px; text-align:center;">
-                <div style="font-size: 0.85rem; text-transform: uppercase; color: #64748b; font-weight: 700;">ЛУЧШАЯ ТОЧКА</div>
-                <div style="font-size: 1.1rem; font-weight: 700; color: #1e293b;">${candName}</div>
-                <div style="font-size: 0.85rem; color: #64748b;">${candType}</div>
-            </div>
-
-            <div style="background: ${bgColor}; color: ${textColor}; padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 20px; border: 1px solid rgba(0,0,0,0.05);">
-                <div style="font-size: 3rem; font-weight: 800; line-height: 1;">${data.score}</div>
-                <div style="font-size: 0.9rem; text-transform: uppercase; font-weight: 600; opacity: 0.8; margin-top:5px;">Score</div>
-                <div style="font-size: 1.2rem; font-weight: 700; margin-top: 10px; line-height: 1.3;">${data.verdict_title}</div>
-            </div>
-
-            <!-- Metrics Grid -->
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px;">
-                <div style="background: #f8fafc; padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #e2e8f0;">
-                    <div style="font-size: 1.2rem; font-weight: 700; color: #334155;">${metrics.real_population_500m}</div>
-                    <div style="font-size: 0.75rem; color: #64748b;">Жители 500м</div>
-                </div>
-                <div style="background: #f8fafc; padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #e2e8f0;">
-                    <div style="font-size: 1.2rem; font-weight: 700; color: #334155;">${metrics.competitors_count}</div>
-                    <div style="font-size: 0.75rem; color: #64748b;">Конкуренты</div>
-                </div>
-            </div>
-
-            <!-- Proof Points (Why YES) -->
-            <div style="margin-bottom: 20px;">
-                <div style="font-size: 0.85rem; text-transform: uppercase; color: #64748b; font-weight: 700; margin-bottom: 10px;">🏆 Почему эта точка?</div>
-                <div style="display: flex; flex-direction: column; gap: 8px;">
-                    ${proofPoints.slice(0,3).map(point => `
-                        <div style="display: flex; align-items: start; gap: 10px; background: white; padding: 10px; border-radius: 8px; border: 1px solid #e2e8f0; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
-                            <div style="color: #22c55e;">✅</div>
-                            <div style="font-size: 0.95rem; color: #334155; font-weight: 500;">${point}</div>
-                        </div>
-                    `).join('')}
-                </div>
-            </div>
-
-            <!-- Recommendation -->
-            <div style="background: #eff6ff; padding: 15px; border-radius: 12px; border-left: 4px solid #3b82f6; margin-bottom: 20px;">
-                <div style="color: #1e40af; font-weight: 700; font-size: 0.9rem; margin-bottom: 5px;">💡 РЕКОМЕНДАЦИЯ</div>
-                <div style="color: #1e3a8a; font-size: 0.95rem; line-height: 1.5;">${data.recommendation}</div>
-            </div>
-
-             <!-- C-Level Debate -->
-            ${data.c_level_debate ? `
-            <div style="margin-top: 20px;">
-                 <div style="font-size: 0.85rem; text-transform: uppercase; color: #64748b; font-weight: 700; margin-bottom: 10px;">👔 Совет Директоров</div>
-                 <div style="display: grid; grid-template-columns: 1fr; gap: 10px;">
-                     <div style="background: #f1f5f9; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1;">
-                         <div style="font-weight: 700; color: #334155; margin-bottom: 5px;">CFO (Финансовый)</div>
-                         <div style="font-size: 0.85rem; color: #475569; font-style: italic;">"${data.c_level_debate.CFO_opinion}"</div>
-                     </div>
-                 </div>
-            </div>
-            ` : ''}
-
-            <button id="btnResetAutoSource" class="primary-btn" style="margin-top: 20px; width: 100%; background-color: #475569;">🔄 Новый поиск</button>
-        </div>
-    `;
-
-    container.innerHTML = html;
-    container.classList.remove('hidden');
-
-    const btnReset = document.getElementById('btnResetAutoSource');
-    if(btnReset) {
-        btnReset.addEventListener('click', () => {
-            container.classList.add('hidden');
-            document.getElementById('autoSourceIntro').classList.remove('hidden');
         });
     }
 }
