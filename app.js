@@ -1081,27 +1081,41 @@ async function askGemini(summaryData, lat, lon, address, locationType, visualTra
 
 const tabEarthquakes = document.getElementById('tabEarthquakes');
 const tabAudit = document.getElementById('tabAudit');
+const tabSearch = document.getElementById('tabSearch');
 const contentEarthquakes = document.getElementById('contentEarthquakes');
 const contentAudit = document.getElementById('contentAudit');
+const contentSearch = document.getElementById('contentSearch');
 
 function switchTab(tab) {
+    // Reset all
+    tabEarthquakes.classList.remove('active');
+    tabAudit.classList.remove('active');
+    if (tabSearch) tabSearch.classList.remove('active');
+
+    contentEarthquakes.classList.add('hidden');
+    contentAudit.classList.add('hidden');
+    if (contentSearch) contentSearch.classList.add('hidden');
+
+    disableAuditMode();
+    disableSearchMode();
+
     if (tab === 'earthquakes') {
         tabEarthquakes.classList.add('active');
-        tabAudit.classList.remove('active');
         contentEarthquakes.classList.remove('hidden');
-        contentAudit.classList.add('hidden');
-        disableAuditMode();
-    } else {
-        tabEarthquakes.classList.remove('active');
+    } else if (tab === 'audit') {
         tabAudit.classList.add('active');
-        contentEarthquakes.classList.add('hidden');
         contentAudit.classList.remove('hidden');
+    } else if (tab === 'search') {
+        if (tabSearch) tabSearch.classList.add('active');
+        if (contentSearch) contentSearch.classList.remove('hidden');
+        enableSearchMode();
     }
 }
 
 if (tabEarthquakes && tabAudit) {
     tabEarthquakes.addEventListener('click', () => switchTab('earthquakes'));
     tabAudit.addEventListener('click', () => switchTab('audit'));
+    if (tabSearch) tabSearch.addEventListener('click', () => switchTab('search'));
 }
 
 let auditModeEnabled = false;
@@ -1302,8 +1316,10 @@ function renderAuditResult(data, summary, locationType, visualTraffic) {
     }
 }
 
-function renderHardBlockResult(reason) {
-    const container = document.getElementById('auditResult');
+function renderHardBlockResult(reason, containerId = 'auditResult') {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
     container.innerHTML = `
         <div class="audit-hard-block">
             <div class="icon">⛔</div>
@@ -1311,30 +1327,144 @@ function renderHardBlockResult(reason) {
             <div style="font-size: 1.5rem; font-weight: bold; margin-bottom: 10px;">Score: 0/100</div>
             <div style="font-size:0.95em; color:#a00;">${reason}</div>
         </div>
-        <button id="btnResetAudit" class="primary-btn" style="margin-top: 15px; background-color: #6c757d;">🔄 Новый поиск</button>
+        <button class="primary-btn btn-reset-audit" style="margin-top: 15px; background-color: #6c757d;">🔄 Новый поиск</button>
     `;
     container.classList.remove('hidden');
-    document.getElementById('auditLoading').classList.add('hidden');
 
-    const btnReset = document.getElementById('btnResetAudit');
+    // Hide loading
+    const loadingId = containerId === 'auditResult' ? 'auditLoading' : 'searchLoading';
+    const loading = document.getElementById(loadingId);
+    if (loading) loading.classList.add('hidden');
+
+    const btnReset = container.querySelector('.btn-reset-audit');
     if(btnReset) {
         btnReset.addEventListener('click', () => {
             container.classList.add('hidden');
-            document.getElementById('auditIntro').classList.remove('hidden');
+            const introId = containerId === 'auditResult' ? 'auditIntro' : 'searchIntro';
+            const intro = document.getElementById(introId);
+            if (intro) intro.classList.remove('hidden');
         });
+    }
+}
+
+// ---- Search Mode Logic ----
+let searchModeEnabled = false;
+let searchCircle = null;
+const searchRadiusInput = document.getElementById('searchRadiusInput');
+const searchRadiusValue = document.getElementById('searchRadiusValue');
+
+function enableSearchMode() {
+    searchModeEnabled = true;
+    updateSearchCircle();
+
+    map.on('move', updateSearchCircle);
+    map.on('zoom', updateSearchCircle);
+}
+
+function disableSearchMode() {
+    searchModeEnabled = false;
+    if (searchCircle) {
+        map.removeLayer(searchCircle);
+        searchCircle = null;
+    }
+    map.off('move', updateSearchCircle);
+    map.off('zoom', updateSearchCircle);
+}
+
+function updateSearchCircle() {
+    if (!searchModeEnabled) return;
+
+    const center = map.getCenter();
+    let radius = 1000;
+    if (searchRadiusInput) {
+        radius = parseInt(searchRadiusInput.value);
+    }
+
+    if (!searchCircle) {
+        searchCircle = L.circle(center, {
+            color: '#3b82f6',
+            fillColor: '#3b82f6',
+            fillOpacity: 0.15,
+            weight: 1,
+            radius: radius
+        }).addTo(map);
+    } else {
+        searchCircle.setLatLng(center);
+        searchCircle.setRadius(radius);
+        if (!map.hasLayer(searchCircle)) {
+            searchCircle.addTo(map);
+        }
+    }
+}
+
+if (searchRadiusInput) {
+    searchRadiusInput.addEventListener('input', () => {
+        const r = searchRadiusInput.value;
+        if (searchRadiusValue) {
+            if (r >= 1000) {
+                searchRadiusValue.innerText = (r / 1000).toFixed(1) + ' км';
+            } else {
+                searchRadiusValue.innerText = r + ' м';
+            }
+        }
+        updateSearchCircle();
+    });
+}
+
+const searchIntro = document.getElementById('searchIntro');
+const searchLoading = document.getElementById('searchLoading');
+const searchResult = document.getElementById('searchResult');
+const btnScanArea = document.getElementById('btnScanArea');
+
+if (btnScanArea) {
+    btnScanArea.addEventListener('click', runAreaScan);
+}
+
+async function runAreaScan() {
+    if (!searchModeEnabled) return;
+
+    const center = map.getCenter();
+    let radius = 1000;
+    if (searchRadiusInput) {
+        radius = parseInt(searchRadiusInput.value);
+    }
+
+    if (searchIntro) searchIntro.classList.add('hidden');
+    if (searchResult) searchResult.classList.add('hidden');
+    if (searchLoading) searchLoading.classList.remove('hidden');
+    if (btnScanArea) btnScanArea.disabled = true;
+
+    try {
+        if (typeof GeomarketingProService === 'undefined' || !GeomarketingProService.scanArea) {
+             throw new Error("Служба поиска не готова (функция scanArea не найдена)");
+        }
+
+        const result = await GeomarketingProService.scanArea(center.lat, center.lng, radius);
+
+        renderProAuditResult(result, 'searchResult');
+
+    } catch (e) {
+        console.error("Scan failed", e);
+        alert(e.message);
+        if (searchIntro) searchIntro.classList.remove('hidden');
+    } finally {
+        if (searchLoading) searchLoading.classList.add('hidden');
+        if (btnScanArea) btnScanArea.disabled = false;
     }
 }
 
 init();
 
-function renderProAuditResult(data) {
-    const container = document.getElementById('auditResult');
+function renderProAuditResult(data, containerId = 'auditResult') {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
     container.innerHTML = '';
 
     // 1. Sanity Check / Terrain Block (Level 1)
     // The service might return a special object for Hard Reject
     if (data.isHardReject) {
-        renderHardBlockResult(data.rejectReason);
+        renderHardBlockResult(data.rejectReason, containerId);
         return;
     }
 
@@ -1503,18 +1633,20 @@ function renderProAuditResult(data) {
                 Данные: WorldPop API (2020), OpenStreetMap, AI Analysis
             </div>
 
-            <button id="btnResetAudit" class="primary-btn" style="margin-top: 20px; width: 100%; background-color: #475569;">🔄 Новый поиск</button>
+            <button class="primary-btn btn-reset-audit" style="margin-top: 20px; width: 100%; background-color: #475569;">🔄 Новый поиск</button>
         </div>
     `;
 
     container.innerHTML = html;
     container.classList.remove('hidden');
 
-    const btnReset = document.getElementById('btnResetAudit');
+    const btnReset = container.querySelector('.btn-reset-audit');
     if(btnReset) {
         btnReset.addEventListener('click', () => {
             container.classList.add('hidden');
-            document.getElementById('auditIntro').classList.remove('hidden');
+            const introId = containerId === 'auditResult' ? 'auditIntro' : 'searchIntro';
+            const intro = document.getElementById(introId);
+            if (intro) intro.classList.remove('hidden');
         });
     }
 }
