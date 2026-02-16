@@ -1506,15 +1506,24 @@ function renderProAuditResult(data, containerId = 'auditResult') {
     const risks = data.risk_factors || [];
 
     // --- Metrics HTML ---
-    // WorldPop
-    const popSource = metrics.is_projected ? '(Расчет)' : '(WorldPop)';
+    // Population Breakdown
+    const popSatellite = metrics.population_satellite !== undefined ? metrics.population_satellite : '-';
+    const popRegistry = metrics.population_registry !== undefined ? metrics.population_registry : '-';
 
     // Warning HTML
-    const warningHtml = data.map_data_warning
-        ? `<div style="background: #fff7ed; color: #c2410c; padding: 10px; border-radius: 8px; border: 1px solid #fdba74; margin-bottom: 15px; text-align: center; font-size: 0.9em;">
-            ⚠️ Детальная карта недоступна. Анализ выполнен на основе спутниковых данных (WorldPop).
-           </div>`
-        : '';
+    let warningHtml = '';
+
+    if (data.map_data_warning) {
+        warningHtml += `<div style="background: #fff7ed; color: #c2410c; padding: 10px; border-radius: 8px; border: 1px solid #fdba74; margin-bottom: 15px; text-align: center; font-size: 0.9em;">
+            ⚠️ Детальная карта недоступна. Анализ выполнен на основе спутниковых данных.
+           </div>`;
+    }
+
+    if (metrics.data_gap_alert) {
+         warningHtml += `<div style="background: #fffbeb; color: #92400e; padding: 10px; border-radius: 8px; border: 1px solid #fcd34d; margin-bottom: 15px; text-align: center; font-size: 0.9em;">
+            ⚠️ Data Gap: Высокий спутниковый трафик не подтвержден этажностью зданий.
+           </div>`;
+    }
 
     const html = `
         <div class="audit-dashboard" style="font-family: 'Inter', sans-serif;">
@@ -1530,7 +1539,10 @@ function renderProAuditResult(data, containerId = 'auditResult') {
             <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 20px;">
                 <div style="background: #f8fafc; padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #e2e8f0;">
                     <div style="font-size: 1.2rem; font-weight: 700; color: #334155;">${metrics.real_population_500m}</div>
-                    <div style="font-size: 0.75rem; color: #64748b;">Жители 500м<br>${popSource}</div>
+                    <div style="font-size: 0.75rem; color: #64748b;">Итоговая оценка<br>
+                        <span style="font-size:0.7em; color:#94a3b8;">📡 WorldPop: ${popSatellite}</span><br>
+                        <span style="font-size:0.7em; color:#94a3b8;">🏠 OSM: ${popRegistry}</span>
+                    </div>
                 </div>
                 <div style="background: #f8fafc; padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #e2e8f0;">
                     <div style="font-size: 1.2rem; font-weight: 700; color: #334155;">${metrics.vibrancy_score}/10</div>
