@@ -118,12 +118,12 @@ class GeomarketingProService {
         };
     }
 
-    static async runPopeyesAudit(lat, lng, centerLat, centerLng, options = {}) {
+    static async runPopeyesAudit(lat, lng, centerLat, centerLng) {
         // Redirect to new GeoAudit 2.0 Logic
-        return this.runGeoAudit2(lat, lng, centerLat, centerLng, options);
+        return this.runGeoAudit2(lat, lng, centerLat, centerLng);
     }
 
-    static async runGeoAudit2(lat, lng, centerLat, centerLng, options = {}) {
+    static async runGeoAudit2(lat, lng, centerLat, centerLng) {
         console.log("Starting GeoAudit 2.0 for:", lat, lng);
 
         // --- LEVEL 1: Gather Data & Engineering Filter ---
@@ -132,7 +132,7 @@ class GeomarketingProService {
         if (typeof getSurroundingData !== 'function') {
             throw new Error("Standard analysis function 'getSurroundingData' not found.");
         }
-        let osmData = await getSurroundingData(lat, lng, options);
+        let osmData = await getSurroundingData(lat, lng);
         let mapDataWarning = false;
 
         if (!osmData) {
@@ -164,27 +164,18 @@ class GeomarketingProService {
         }
 
         // --- LEVEL 2: Real Demography (WorldPop) ---
-        let popData;
-        if (options && options.useOfficialStats) {
-            console.log("Using Official Statistics (Hybrid Calibration)");
-            popData = {
-                population: Math.round(osmData.population),
-                is_projected: true
-            };
-        } else {
-            popData = await WorldPopService.getPopulation(lat, lng);
+        let popData = await WorldPopService.getPopulation(lat, lng);
 
-            // Fallback: Roof Counting
-            if (popData.population === null) {
-                console.log("Using Roof Counting Fallback");
-                // osmData.population was calculated as levels * 4. Requirement says levels * 3.5.
-                // Let's recalculate based on apartments count and levels if possible,
-                // but osmData.population is already summarized.
-                // osmData.population = levels * 4.
-                // So: population / 4 * 3.5 = population * 0.875.
-                popData.population = Math.round(osmData.population * 0.875);
-                popData.is_projected = true;
-            }
+        // Fallback: Roof Counting
+        if (popData.population === null) {
+            console.log("Using Roof Counting Fallback");
+            // osmData.population was calculated as levels * 4. Requirement says levels * 3.5.
+            // Let's recalculate based on apartments count and levels if possible,
+            // but osmData.population is already summarized.
+            // osmData.population = levels * 4.
+            // So: population / 4 * 3.5 = population * 0.875.
+            popData.population = Math.round(osmData.population * 0.875);
+            popData.is_projected = true;
         }
 
         // --- LEVEL 3: Vibrancy & Scoring ---
@@ -208,7 +199,7 @@ class GeomarketingProService {
         const aiResult = await this.askGeminiPro(data, 'popeyes');
 
         // Merge Results
-        const result = {
+        return {
             ...aiResult, // AI Verdict, Proof Points, Risks
             score: geoScore,
             map_data_warning: mapDataWarning,
@@ -225,13 +216,6 @@ class GeomarketingProService {
                 generators: { totalScore: geoScore } // reuse structure for compatibility if needed
             }
         };
-
-        if (options && options.useOfficialStats) {
-             result.source = "Данные бюро статистики РК 2026 год - актуальность 1 января 2026 года";
-             result.method = "Hybrid Calibration";
-        }
-
-        return result;
     }
 
     static calculateVibrancyScore(metrics) {
@@ -295,7 +279,7 @@ class GeomarketingProService {
 
     // ---- AI Search Module ----
 
-    static async scanArea(lat, lng, radius, options = {}) {
+    static async scanArea(lat, lng, radius) {
         console.log(`Scanning area: ${lat}, ${lng}, r=${radius}`);
 
         // 1. Validation (Geo-Fence: Almaty)
@@ -328,7 +312,7 @@ class GeomarketingProService {
         for (const cand of topCandidates) {
             try {
                 // Call the EXACT same function as manual click
-                const report = await this.runPopeyesAudit(cand.lat, cand.lon, lat, lng, options);
+                const report = await this.runPopeyesAudit(cand.lat, cand.lon, lat, lng);
                 report.candidateName = cand.name;
                 report.candidateType = cand.type;
                 report.coords = { lat: cand.lat, lng: cand.lon };
@@ -544,36 +528,11 @@ class GeomarketingProService {
                 body: JSON.stringify(payload)
             });
 
-            if (!response.ok) {
-                // If server returns error but has JSON body, try to parse it
-                try {
-                    const errData = await response.json();
-                    if (errData && (errData.verdict_title || errData.score)) {
-                        return errData; // It's a mock response sent with error status or just handled
-                    }
-                } catch(jsonErr) {
-                    // Ignore
-                }
-                throw new Error("Server API Error");
-            }
+            if (!response.ok) throw new Error("Server API Error");
 
             return await response.json();
         } catch (e) {
             console.error("AI Request Failed", e);
-            // Return Mock Fallback purely client side if server is dead
-            if (e.message.includes("Server API Error") || e.message.includes("Failed to fetch")) {
-                 console.warn("Returning Client-Side Mock due to API Failure");
-                 return {
-                    "verdict_title": "MOCK ANALYSIS (Client Fallback)",
-                    "score": 50,
-                    "proof_points": ["System Offline", "Mock Data Used"],
-                    "recommendation": "Check server connection or API Key.",
-                    "risk_factors": ["Offline Mode"],
-                    "executive_summary": "Analysis failed. Showing fallback data.",
-                    "c_level_debate": { "COO_opinion": "N/A", "CFO_opinion": "N/A" },
-                    "marketing_5p": { "place_audit": "N/A", "people_audit": "N/A", "product_fit": "N/A", "price_potential": "N/A", "promotion_strategy": "N/A" }
-                 };
-            }
             throw e;
         }
     }

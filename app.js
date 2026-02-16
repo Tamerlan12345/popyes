@@ -1170,43 +1170,29 @@ map.on('click', (e) => {
                 <b>Координаты:</b> ${lat.toFixed(5)}, ${lng.toFixed(5)}
             </div>
 
-            <div style="margin:10px 0; text-align:left;">
-                <label style="cursor:pointer; display:flex; align-items:center; gap:5px; font-size:0.85em;">
-                    <input type="checkbox" id="chkOfficialStats">
-                    Использовать метод через данные РК + Коэф Плотности
-                </label>
-            </div>
-            <button class="primary-btn popup-btn btn-run-analysis"
-                data-lat="${lat}" data-lng="${lng}"
-                onclick="runAnalysisWrapper(this)">
-                📊 Анализировать
-            </button>
+            <button id="btnRunAnalysis" class="primary-btn popup-btn">📊 Анализировать</button>
         </div>
     `;
 
     auditMarker.bindPopup(popupContent).openPopup();
 });
 
-// Global wrapper for popup button
-window.runAnalysisWrapper = function(btn) {
-    try {
-        const lat = parseFloat(btn.dataset.lat);
-        const lng = parseFloat(btn.dataset.lng);
-
-        // Find checkbox relative to button to avoid ID conflicts
-        let useOfficialStats = false;
-        const parent = btn.parentElement;
-        if (parent) {
-            const cb = parent.querySelector('input[type="checkbox"]'); // simplified selector
-            if (cb) useOfficialStats = cb.checked;
+map.on('popupopen', (e) => {
+    const btn = document.getElementById('btnRunAnalysis');
+    if (btn) {
+        let latlng = e.popup.getLatLng();
+        if (!latlng && e.popup._source) {
+             latlng = e.popup._source.getLatLng();
         }
 
-        runAnalysis({lat, lng}, { useOfficialStats });
-        map.closePopup();
-    } catch (e) {
-        console.error("Popup click error:", e);
+        btn.onclick = () => {
+             if(latlng) {
+                 runAnalysis(latlng);
+                 map.closePopup();
+             }
+        };
     }
-};
+});
 // --- Новая функция для получения адреса ---
 
 async function getAddress(lat, lon) {
@@ -1222,7 +1208,7 @@ async function getAddress(lat, lon) {
     }
 }
 
-async function runAnalysis(latlng, options = {}) {
+async function runAnalysis(latlng) {
     const { lat, lng } = latlng;
     const center = map.getCenter();
 
@@ -1237,7 +1223,7 @@ async function runAnalysis(latlng, options = {}) {
         }
 
         // Always run Popeyes Audit
-        const proResult = await GeomarketingProService.runPopeyesAudit(lat, lng, center.lat, center.lng, options);
+        const proResult = await GeomarketingProService.runPopeyesAudit(lat, lng, center.lat, center.lng);
 
         renderProAuditResult(proResult);
 
@@ -1444,10 +1430,6 @@ async function runAreaScan() {
         radius = parseInt(searchRadiusInput.value);
     }
 
-    let useOfficialStats = false;
-    const chk = document.getElementById('chkOfficialStatsSearch');
-    if (chk) useOfficialStats = chk.checked;
-
     if (searchIntro) searchIntro.classList.add('hidden');
     if (searchResult) searchResult.classList.add('hidden');
     if (searchLoading) searchLoading.classList.remove('hidden');
@@ -1458,7 +1440,7 @@ async function runAreaScan() {
              throw new Error("Служба поиска не готова (функция scanArea не найдена)");
         }
 
-        const result = await GeomarketingProService.scanArea(center.lat, center.lng, radius, { useOfficialStats });
+        const result = await GeomarketingProService.scanArea(center.lat, center.lng, radius);
 
         disableSearchMode(); // Stop circle updates and hide it
 
@@ -1666,7 +1648,7 @@ function renderProAuditResult(data, containerId = 'auditResult') {
 
             <!-- Data Sources Footer -->
             <div style="margin-top: 20px; font-size: 0.7rem; color: #94a3b8; text-align: center;">
-                Данные: ${data.source || 'WorldPop API (2020)'}, OpenStreetMap, AI Analysis
+                Данные: WorldPop API (2020), OpenStreetMap, AI Analysis
             </div>
 
             <button class="primary-btn btn-reset-audit" style="margin-top: 20px; width: 100%; background-color: #475569;">🔄 Новый поиск</button>
