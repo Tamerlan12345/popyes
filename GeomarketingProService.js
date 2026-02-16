@@ -126,16 +126,29 @@ class GeomarketingProService {
     static async runGeoAudit2(lat, lng, centerLat, centerLng) {
         console.log("Starting GeoAudit 2.0 for:", lat, lng);
 
-        // --- LEVEL 1: Gather Data & Engineering Filter ---
+        // --- LEVEL 1: Parallel Data Gathering (Smart Consensus) ---
 
-        // 1. Basic OSM Data (Levels 1 & 3)
         if (typeof getSurroundingData !== 'function') {
             throw new Error("Standard analysis function 'getSurroundingData' not found.");
         }
-        let osmData = await getSurroundingData(lat, lng);
+
+        // Parallel fetch
+        const [osmResult, popResult] = await Promise.allSettled([
+            getSurroundingData(lat, lng),
+            WorldPopService.getPopulation(lat, lng)
+        ]);
+
+        // Process OSM Data
+        let osmData = null;
         let mapDataWarning = false;
 
-        if (!osmData) {
+        if (osmResult.status === 'fulfilled' && osmResult.value) {
+            osmData = osmResult.value;
+            if (osmData.isPartial || osmData.osm_data_missing) {
+                console.warn("OSM Data is partial or missing.");
+                mapDataWarning = true;
+            }
+        } else {
             console.warn("OSM Data fetch failed completely. Using empty fallback.");
             osmData = {
                 population: 0,
@@ -148,9 +161,6 @@ class GeomarketingProService {
                 redFlagReason: null
             };
             mapDataWarning = true;
-        } else if (osmData.isPartial || osmData.osm_data_missing) {
-             console.warn("OSM Data is partial or missing.");
-             mapDataWarning = true;
         }
 
         // 2. Hard Reject Check (Taboo Zones)
@@ -163,29 +173,51 @@ class GeomarketingProService {
             };
         }
 
-        // --- LEVEL 2: Real Demography (WorldPop) ---
-        let popData = await WorldPopService.getPopulation(lat, lng);
+        // Process WorldPop Data
+        let popData = { population: 0, is_projected: false };
+        if (popResult.status === 'fulfilled') {
+            popData = popResult.value;
+        }
 
-        // Fallback: Roof Counting
-        if (popData.population === null) {
-            console.log("Using Roof Counting Fallback");
-            // osmData.population was calculated as levels * 4. Requirement says levels * 3.5.
-            // Let's recalculate based on apartments count and levels if possible,
-            // but osmData.population is already summarized.
-            // osmData.population = levels * 4.
-            // So: population / 4 * 3.5 = population * 0.875.
-            popData.population = Math.round(osmData.population * 0.875);
+        // --- LEVEL 2: Smart Consensus Logic ---
+
+        // 1. Satellite Population (WorldPop)
+        let popSatellite = popData.population;
+        if (popSatellite === null) {
+            // Fallback to Hexagon (Projected)
+            const hexagonDensity = HexagonDataService.getDensity(lat, lng, centerLat || lat, centerLng || lng);
+            // 500m radius area ~ 78.5 ha
+            popSatellite = Math.round(hexagonDensity * 78.5);
             popData.is_projected = true;
+        }
+
+        // 2. Registry Population (OSM Roofs)
+        const popRegistry = osmData.population || 0;
+
+        // 3. Final Population (Max Strategy)
+        const finalPopulation = Math.max(popSatellite, popRegistry);
+
+        // 4. Data Gap Detection
+        let dataGapWarning = false;
+        if (!popData.is_projected) {
+             if (popSatellite > (popRegistry * 3) && popSatellite > 1000) {
+                 dataGapWarning = true;
+             }
         }
 
         // --- LEVEL 3: Vibrancy & Scoring ---
         const vibrancyScore = this.calculateVibrancyScore(osmData.vibrancy || {});
-        const geoScore = this.calculateGeoAuditScore(popData.population, vibrancyScore, osmData);
+        // Use finalPopulation for scoring
+        const geoScore = this.calculateGeoAuditScore(finalPopulation, vibrancyScore, osmData);
 
         // Prepare Data for AI
         const data = {
             lat, lng,
-            real_population_500m: popData.population,
+            real_population_500m: finalPopulation,
+            population_satellite: popSatellite,
+            population_registry: popRegistry,
+            data_gap_alert: dataGapWarning,
+            final_population_used: finalPopulation,
             is_projected: popData.is_projected,
             vibrancy_score: vibrancyScore,
             score: geoScore,
@@ -204,16 +236,20 @@ class GeomarketingProService {
             score: geoScore,
             map_data_warning: mapDataWarning,
             metrics: {
-                real_population_500m: popData.population,
+                real_population_500m: finalPopulation,
+                population_satellite: popSatellite,
+                population_registry: popRegistry,
+                data_gap_alert: dataGapWarning,
+                final_population_used: finalPopulation,
                 is_projected: popData.is_projected,
                 vibrancy_score: vibrancyScore,
                 competitors_count: osmData.competitors.length
             },
             rawData: {
-                density: Math.round(popData.population / 78.5), // approx density
-                estimatedPopulation: popData.population,
+                density: Math.round(finalPopulation / 78.5), // approx density
+                estimatedPopulation: finalPopulation,
                 competitorCount: osmData.competitors.length,
-                generators: { totalScore: geoScore } // reuse structure for compatibility if needed
+                generators: { totalScore: geoScore }
             }
         };
     }
